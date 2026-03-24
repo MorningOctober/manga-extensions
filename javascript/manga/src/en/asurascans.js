@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.7",
+		version: "0.2.8",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -17,6 +17,12 @@ const mangayomiSources = [
 ];
 
 class DefaultExtension extends MProvider {
+	_trimTrailingSlash(url) {
+		return String(url || "")
+			.trim()
+			.replace(/\/+$/, "");
+	}
+
 	_parseJsonBody(body, context) {
 		const raw = String(body || "").trim();
 		try {
@@ -49,19 +55,70 @@ class DefaultExtension extends MProvider {
 	}
 
 	get apiBase() {
-		return new SharedPreferences().get("overrideApiUrl") || this.source.apiUrl;
-	}
-
-	get siteBase() {
-		return (
-			new SharedPreferences().get("overrideSiteUrl") || this.source.baseUrl
+		return this._trimTrailingSlash(
+			new SharedPreferences().get("overrideApiUrl") || this.source.apiUrl,
 		);
 	}
 
-	// "/comics/overgeared-f6174291" → "overgeared"
+	get siteBase() {
+		return this._trimTrailingSlash(
+			new SharedPreferences().get("overrideSiteUrl") || this.source.baseUrl,
+		);
+	}
+
+	// Supports: "/comics/foo-f6174291", "https://.../comics/foo-f6174291", "/series/foo", "foo"
 	_slugFromUrl(url) {
-		const seg = url.replace(/^\/comics\//, "").replace(/^comics\//, "");
-		return seg.replace(/-f[0-9a-f]{6,8}$/, "");
+		const raw = String(url || "").trim();
+		if (!raw) throw new Error("Missing manga URL");
+		if (raw.includes("||")) return raw.split("||")[0];
+
+		let path = raw
+			.replace(/^https?:\/\/[^/]+/i, "")
+			.split("?")[0]
+			.split("#")[0];
+		path = path.replace(/^\/+/, "").replace(/\/+$/, "");
+
+		const routeMatch = path.match(/(?:^|\/)(?:comics|series)\/([^/]+)/i);
+		if (routeMatch && routeMatch[1]) {
+			return routeMatch[1].replace(/-f[0-9a-f]{6,8}$/i, "");
+		}
+
+		const singleSegment = path.split("/").filter(Boolean);
+		if (singleSegment.length === 1) {
+			return singleSegment[0].replace(/-f[0-9a-f]{6,8}$/i, "");
+		}
+
+		throw new Error(`Unable to parse series slug from URL: ${url}`);
+	}
+
+	_chapterRefFromUrl(url) {
+		const raw = String(url || "").trim();
+		if (!raw) throw new Error("Missing chapter URL");
+
+		if (raw.includes("||")) {
+			const [seriesSlug, chapterSlug] = raw.split("||");
+			return { seriesSlug, chapterSlug };
+		}
+
+		let path = raw
+			.replace(/^https?:\/\/[^/]+/i, "")
+			.split("?")[0]
+			.split("#")[0];
+		path = path.replace(/^\/+/, "").replace(/\/+$/, "");
+		const parts = path.split("/").filter(Boolean);
+
+		if (
+			parts.length >= 3 &&
+			(parts[0] === "comics" || parts[0] === "series") &&
+			parts[1]
+		) {
+			return {
+				seriesSlug: parts[1].replace(/-f[0-9a-f]{6,8}$/i, ""),
+				chapterSlug: parts[parts.length - 1],
+			};
+		}
+
+		throw new Error(`Unable to parse chapter URL: ${url}`);
 	}
 
 	_parseMangaList(json) {
@@ -70,7 +127,7 @@ class DefaultExtension extends MProvider {
 		const list = items.map((item) => ({
 			name: item.title || item.name || "",
 			imageUrl: item.cover || item.cover_url || "",
-			link: item.public_url || `/comics/${item.slug}`,
+			link: item.public_url || (item.slug ? `/comics/${item.slug}` : ""),
 		}));
 		return { list, hasNextPage: meta.has_more === true };
 	}
@@ -82,6 +139,7 @@ class DefaultExtension extends MProvider {
 			case "completed":
 				return 1;
 			case "hiatus":
+			case "seasonal":
 				return 2;
 			case "dropped":
 				return 3;
@@ -140,7 +198,7 @@ class DefaultExtension extends MProvider {
 			: "";
 
 		let url = `${this.apiBase}/api/series?offset=${offset}&limit=20&sort=${sortBy}&order=${sortDir}`;
-		if (q) url += `&title=${q}`;
+		if (q) url += `&search=${q}`;
 		if (status) url += `&status=${status}`;
 		if (type) url += `&type=${type}`;
 		if (genres) url += `&genres=${encodeURIComponent(genres)}`;
@@ -161,11 +219,6 @@ class DefaultExtension extends MProvider {
 						type_name: "SelectOption",
 						name: "Latest Update",
 						value: "latest",
-					},
-					{
-						type_name: "SelectOption",
-						name: "Bookmarks",
-						value: "bookmarks",
 					},
 				],
 			},
@@ -191,6 +244,11 @@ class DefaultExtension extends MProvider {
 						value: "completed",
 					},
 					{ type_name: "SelectOption", name: "Hiatus", value: "hiatus" },
+					{
+						type_name: "SelectOption",
+						name: "Seasonal",
+						value: "seasonal",
+					},
 					{ type_name: "SelectOption", name: "Dropped", value: "dropped" },
 				],
 			},
@@ -299,18 +357,26 @@ class DefaultExtension extends MProvider {
 		}
 
 		// chapter url = "seriesSlug||chapterSlug" für getPageList
-		const chapters = allChaps.map((ch) => ({
-			name: `Chapter ${ch.number}`,
-			url: `${slug}||${ch.slug}`,
-			dateUpload: this.parseDate(ch.published_at),
-		}));
+		const chapters = allChaps
+			.filter((ch) => !ch.is_locked)
+			.map((ch) => {
+				const chapterLabel =
+					ch.number != null ? `Chapter ${ch.number}` : "Chapter";
+				const chapterTitle = (ch.title || "").trim();
+				return {
+					name: chapterTitle
+						? `${chapterLabel} - ${chapterTitle}`
+						: chapterLabel,
+					url: `${slug}||${ch.slug}`,
+					dateUpload: this.parseDate(ch.published_at),
+				};
+			});
 
 		return { imageUrl, description, genre, author, artist, status, chapters };
 	}
 
 	async getPageList(url) {
-		// url = "seriesSlug||chapterSlug"
-		const [seriesSlug, chapterSlug] = url.split("||");
+		const { seriesSlug, chapterSlug } = this._chapterRefFromUrl(url);
 
 		const res = await new Client().get(
 			`${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`,
@@ -319,10 +385,21 @@ class DefaultExtension extends MProvider {
 		const chapter = json.data && json.data.chapter ? json.data.chapter : json;
 		const pages = chapter.pages || [];
 
-		return pages
-			.map((p, i) => ({ url: p.url, order: p.order != null ? p.order : i }))
+		const pageList = pages
+			.map((p, i) =>
+				typeof p === "string"
+					? { url: p, order: i }
+					: { url: p.url, order: p.order != null ? p.order : i },
+			)
+			.filter((p) => !!p.url)
 			.sort((a, b) => a.order - b.order)
 			.map((p) => p.url);
+
+		if (pageList.length === 0) {
+			throw new Error("No readable pages found for this chapter");
+		}
+
+		return pageList;
 	}
 
 	getSourcePreferences() {
