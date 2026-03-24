@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.9",
+		version: "0.2.12",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -17,6 +17,13 @@ const mangayomiSources = [
 ];
 
 class DefaultExtension extends MProvider {
+	constructor(...args) {
+		super(...args);
+		this._hasSessionAuthCache = null;
+		this._accessTokenCache = "";
+		this._refreshTokenCache = "";
+	}
+
 	_trimTrailingSlash(url) {
 		return String(url || "")
 			.trim()
@@ -59,8 +66,109 @@ class DefaultExtension extends MProvider {
 		}
 	}
 
+	_getHeaderValue(headers, targetKey) {
+		if (!headers || typeof headers !== "object") return "";
+		const normalizedTarget = String(targetKey || "").toLowerCase();
+		for (const key of Object.keys(headers)) {
+			if (String(key).toLowerCase() !== normalizedTarget) continue;
+			const value = headers[key];
+			if (Array.isArray(value)) return value.join("; ");
+			return value != null ? String(value) : "";
+		}
+		return "";
+	}
+
+	_cacheAuthTokensFromResponse(response) {
+		const cookieHeader = this._getHeaderValue(
+			response?.request?.headers,
+			"cookie",
+		);
+		if (!cookieHeader) return;
+
+		let accessToken = "";
+		let refreshToken = "";
+		for (const part of cookieHeader.split(";")) {
+			const idx = part.indexOf("=");
+			if (idx <= 0) continue;
+			const name = part.slice(0, idx).trim();
+			let value = part.slice(idx + 1).trim();
+			if (!value) continue;
+			try {
+				value = decodeURIComponent(value);
+			} catch (_err) {}
+			if (name === "access_token") accessToken = value;
+			if (name === "refresh_token") refreshToken = value;
+		}
+
+		if (accessToken && accessToken !== this._accessTokenCache) {
+			this._accessTokenCache = accessToken;
+			this._hasSessionAuthCache = null;
+		}
+		if (refreshToken && refreshToken !== this._refreshTokenCache) {
+			this._refreshTokenCache = refreshToken;
+			this._hasSessionAuthCache = null;
+		}
+	}
+
 	getHeaders(_url) {
 		return { Referer: this.siteBase };
+	}
+
+	get apiHeaders() {
+		return { Referer: this.siteBase };
+	}
+
+	_buildApiHeaders(useAuth = false) {
+		const headers = { Referer: this.siteBase };
+		if (useAuth && this._accessTokenCache) {
+			headers.Authorization = `Bearer ${this._accessTokenCache}`;
+		}
+		return headers;
+	}
+
+	async _apiGet(url, useAuth = false) {
+		const res = await new Client().get(url, this._buildApiHeaders(useAuth));
+		this._cacheAuthTokensFromResponse(res);
+		return res;
+	}
+
+	async _refreshAccessToken() {
+		if (!this._refreshTokenCache) return false;
+		try {
+			const res = await new Client().post(
+				`${this.apiBase}/api/auth/refresh`,
+				{
+					...this.apiHeaders,
+					"Content-Type": "application/json",
+				},
+				{ refresh_token: this._refreshTokenCache },
+			);
+			this._cacheAuthTokensFromResponse(res);
+			const json = this._parseJsonBody(res.body, "auth-refresh");
+			const data = json.data || json;
+			if (data?.access_token)
+				this._accessTokenCache = String(data.access_token);
+			if (data?.refresh_token)
+				this._refreshTokenCache = String(data.refresh_token);
+			return !!this._accessTokenCache;
+		} catch (_err) {
+			return false;
+		}
+	}
+
+	async _hasSessionAuth() {
+		if (this._hasSessionAuthCache != null) return this._hasSessionAuthCache;
+		try {
+			const res = await this._apiGet(`${this.apiBase}/api/users/me`, true);
+			const json = this._parseJsonBody(res.body, "session-auth-probe");
+			const user = json.data || json;
+			const ok = !!user && !json.error;
+			this._hasSessionAuthCache = ok;
+			return ok;
+		} catch (_err) {
+			this._hasSessionAuthCache = false;
+			return false;
+		}
 	}
 
 	get apiBase() {
@@ -168,16 +276,18 @@ class DefaultExtension extends MProvider {
 
 	async getPopular(page) {
 		const offset = (page - 1) * 20;
-		const res = await new Client().get(
+		const res = await this._apiGet(
 			`${this.apiBase}/api/series?sort=rating&order=desc&offset=${offset}&limit=20`,
+			true,
 		);
 		return this._parseMangaList(this._parseJsonBody(res.body, "getPopular"));
 	}
 
 	async getLatestUpdates(page) {
 		const offset = (page - 1) * 20;
-		const res = await new Client().get(
+		const res = await this._apiGet(
 			`${this.apiBase}/api/series?sort=latest&order=desc&offset=${offset}&limit=20`,
+			true,
 		);
 		return this._parseMangaList(
 			this._parseJsonBody(res.body, "getLatestUpdates"),
@@ -215,7 +325,7 @@ class DefaultExtension extends MProvider {
 		if (type) url += `&type=${type}`;
 		if (genres) url += `&genres=${encodeURIComponent(genres)}`;
 
-		const res = await new Client().get(url);
+		const res = await this._apiGet(url, true);
 		return this._parseMangaList(this._parseJsonBody(res.body, "search"));
 	}
 
@@ -337,8 +447,9 @@ class DefaultExtension extends MProvider {
 	async getDetail(url) {
 		const slug = this._slugFromUrl(url);
 
-		const seriesRes = await new Client().get(
+		const seriesRes = await this._apiGet(
 			`${this.apiBase}/api/series/${slug}`,
+			true,
 		);
 		const seriesJson = this._parseJsonBody(seriesRes.body, "getDetail-series");
 		const s = seriesJson.series || seriesJson;
@@ -360,8 +471,9 @@ class DefaultExtension extends MProvider {
 		let offset = 0;
 		const limit = 100;
 		while (true) {
-			const chapRes = await new Client().get(
+			const chapRes = await this._apiGet(
 				`${this.apiBase}/api/series/${slug}/chapters?offset=${offset}&limit=${limit}`,
+				true,
 			);
 			const pageJson = this._parseJsonBody(
 				chapRes.body,
@@ -384,49 +496,78 @@ class DefaultExtension extends MProvider {
 		}
 
 		// chapter url is a web path so WebView can open it directly
-		const chapters = allChaps
-			.filter((ch) => !ch.is_locked)
-			.map((ch) => {
-				const chapterLabel =
-					ch.number != null ? `Chapter ${ch.number}` : "Chapter";
-				const chapterTitle = (ch.title || "").trim();
-				return {
-					name: chapterTitle
-						? `${chapterLabel} - ${chapterTitle}`
-						: chapterLabel,
-					url: `${seriesPublicUrl}/chapter/${ch.slug}`,
-					dateUpload: this.parseDate(ch.published_at),
-				};
-			});
+		const chapters = allChaps.map((ch) => {
+			const chapterLabel =
+				ch.number != null ? `Chapter ${ch.number}` : "Chapter";
+			const chapterTitle = (ch.title || "").trim();
+			return {
+				name: chapterTitle ? `${chapterLabel} - ${chapterTitle}` : chapterLabel,
+				url: `${seriesPublicUrl}/chapter/${ch.slug}`,
+				dateUpload: this.parseDate(ch.published_at),
+			};
+		});
 
 		return { imageUrl, description, genre, author, artist, status, chapters };
 	}
 
 	async getPageList(url) {
 		const { seriesSlug, chapterSlug } = this._chapterRefFromUrl(url);
+		const endpoint = `${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`;
 
-		const res = await new Client().get(
-			`${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`,
-		);
-		const json = this._parseJsonBody(res.body, "getPageList");
-		const chapter = json.data?.chapter ? json.data.chapter : json;
-		const pages = chapter.pages || [];
+		const parsePageList = (chapter) => {
+			const pages = chapter?.pages || [];
+			return pages
+				.map((p, i) =>
+					typeof p === "string"
+						? { url: p, order: i }
+						: { url: p.url, order: p.order != null ? p.order : i },
+				)
+				.filter((p) => !!p.url)
+				.sort((a, b) => a.order - b.order)
+				.map((p) => p.url);
+		};
 
-		const pageList = pages
-			.map((p, i) =>
-				typeof p === "string"
-					? { url: p, order: i }
-					: { url: p.url, order: p.order != null ? p.order : i },
-			)
-			.filter((p) => !!p.url)
-			.sort((a, b) => a.order - b.order)
-			.map((p) => p.url);
+		const fetchChapter = async (context) => {
+			const res = await this._apiGet(endpoint, true);
+			const json = this._parseJsonBody(res.body, context);
+			const chapter = json.data?.chapter ? json.data.chapter : json;
+			return chapter;
+		};
 
-		if (pageList.length === 0) {
-			throw new Error("No readable pages found for this chapter");
+		let chapter = await fetchChapter("getPageList-initial");
+		let pageList = parsePageList(chapter);
+
+		// First request may have only cookie auth; retry with bearer if token was discovered.
+		if (pageList.length === 0 && chapter?.is_locked && this._accessTokenCache) {
+			chapter = await fetchChapter("getPageList-bearer-retry");
+			pageList = parsePageList(chapter);
 		}
 
-		return pageList;
+		// If bearer token expired, refresh and retry once.
+		if (
+			pageList.length === 0 &&
+			chapter?.is_locked &&
+			this._refreshTokenCache
+		) {
+			const refreshed = await this._refreshAccessToken();
+			if (refreshed) {
+				chapter = await fetchChapter("getPageList-refresh-retry");
+				pageList = parsePageList(chapter);
+			}
+		}
+
+		if (pageList.length > 0) return pageList;
+
+		const hasSessionAuth = await this._hasSessionAuth();
+		if (!hasSessionAuth) {
+			throw new Error(
+				"Chapter appears locked. Login via source WebView, then retry.",
+			);
+		}
+		if (chapter?.is_locked) {
+			throw new Error("Chapter is locked (premium required on Asura Scans).");
+		}
+		throw new Error("No readable pages found for this chapter");
 	}
 
 	getSourcePreferences() {
