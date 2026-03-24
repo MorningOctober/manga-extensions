@@ -2,16 +2,12 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'dart/manga/manga_source_list.dart';
-import 'dart/novel/novel_source_list.dart';
 import 'model/source.dart';
 
 void main() {
   final jsSources = _searchJsSources(Directory("javascript"));
   genManga(
     jsSources.where((element) => element.itemType!.name == "manga").toList(),
-  );
-  genNovel(
-    jsSources.where((element) => element.itemType!.name == "novel").toList(),
   );
 }
 
@@ -30,68 +26,76 @@ void genManga(List<Source> jsMangasourceList) {
   log('JSON file created: ${file.path}');
 }
 
-void genNovel(List<Source> jsNovelSourceList) {
-  List<Source> novelSources = [];
-  novelSources.addAll(dartNovelSourceList);
-  novelSources.addAll(jsNovelSourceList);
-  final List<Map<String, dynamic>> jsonList = novelSources
-      .map((source) => source.toJson())
-      .toList();
-  final jsonString = jsonEncode(jsonList);
-
-  final file = File('novel_index.json');
-  file.writeAsStringSync(jsonString);
-
-  log('JSON file created: ${file.path}');
-}
-
 List<Source> _searchJsSources(Directory dir) {
   List<Source> sourceList = [];
-  List<FileSystemEntity> entities = dir.listSync();
-  for (FileSystemEntity entity in entities) {
-    if (entity is Directory) {
-      List<FileSystemEntity> entities = entity.listSync();
-      for (FileSystemEntity entity in entities) {
-        if (entity is Directory) {
-          sourceList.addAll(_searchJsSources(entity));
-        } else if (entity is File && entity.path.endsWith('.js')) {
-          final regex = RegExp(
-            r'const\s+mangayomiSources\s*=\s*(\[.*?\]);',
-            dotAll: true,
+  final jsFiles = dir.listSync(recursive: true, followLinks: false).whereType<File>().where(
+    (file) => file.path.endsWith('.js'),
+  );
+
+  final sourceRegex = RegExp(
+    r'\b(?:const|let|var)\s+mangayomiSources\s*=\s*(\[[\s\S]*?\])\s*;?',
+    multiLine: true,
+  );
+
+  for (final file in jsFiles) {
+    final content = file.readAsStringSync();
+    final match = sourceRegex.firstMatch(content);
+    if (match == null) {
+      continue;
+    }
+
+    final defaultSource = Source();
+    for (var sourceJson in _decodeSourceList(match.group(1)!, file.path)) {
+      final langs = sourceJson["langs"] as List?;
+      Source source = Source.fromJson(sourceJson)
+        ..sourceCodeLanguage = 1
+        ..appMinVerReq = sourceJson["appMinVerReq"] ?? defaultSource.appMinVerReq
+        ..sourceCodeUrl =
+            "https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/$branchName/javascript/${sourceJson["pkgPath"] ?? sourceJson["pkgName"]}";
+      if (sourceJson["id"] != null) {
+        source = source..id = int.tryParse("${sourceJson["id"]}");
+      }
+      if (langs?.isNotEmpty ?? false) {
+        for (var lang in langs!) {
+          final id = sourceJson["ids"]?[lang] as int?;
+          sourceList.add(
+            Source.fromJson(source.toJson())
+              ..lang = lang
+              ..id = id ?? 'mangayomi-js-"$lang"."${source.name}"'.hashCode,
           );
-          final defaultSource = Source();
-          final match = regex.firstMatch(entity.readAsStringSync());
-          if (match != null) {
-            for (var sourceJson in jsonDecode(match.group(1)!) as List) {
-              final langs = sourceJson["langs"] as List?;
-              Source source = Source.fromJson(sourceJson)
-                ..sourceCodeLanguage = 1
-                ..appMinVerReq =
-                    sourceJson["appMinVerReq"] ?? defaultSource.appMinVerReq
-                ..sourceCodeUrl =
-                    "https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/$branchName/javascript/${sourceJson["pkgPath"] ?? sourceJson["pkgName"]}";
-              if (sourceJson["id"] != null) {
-                source = source..id = int.tryParse("${sourceJson["id"]}");
-              }
-              if (langs?.isNotEmpty ?? false) {
-                for (var lang in langs!) {
-                  final id = sourceJson["ids"]?[lang] as int?;
-                  sourceList.add(
-                    Source.fromJson(source.toJson())
-                      ..lang = lang
-                      ..id =
-                          id ??
-                          'mangayomi-js-"$lang"."${source.name}"'.hashCode,
-                  );
-                }
-              } else {
-                sourceList.add(source);
-              }
-            }
-          }
         }
+      } else {
+        sourceList.add(source);
       }
     }
   }
   return sourceList;
+}
+
+List<Map<String, dynamic>> _decodeSourceList(
+  String rawArrayLiteral,
+  String filePath,
+) {
+  try {
+    return (jsonDecode(rawArrayLiteral) as List).cast<Map<String, dynamic>>();
+  } catch (_) {
+    // Fallback for JS object literals with unquoted keys and trailing commas.
+  }
+
+  // Accept JS object literals used in source files: unquoted keys and trailing commas.
+  final withQuotedKeys = rawArrayLiteral.replaceAllMapped(
+    RegExp(r'([\[{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:'),
+    (m) => '${m.group(1)}"${m.group(2)}":',
+  );
+  final withoutTrailingCommas = withQuotedKeys.replaceAllMapped(
+    RegExp(r',(\s*[}\]])'),
+    (m) => m.group(1)!,
+  );
+  try {
+    return (jsonDecode(withoutTrailingCommas) as List)
+        .cast<Map<String, dynamic>>();
+  } catch (e) {
+    log('Failed to parse source metadata list in $filePath: $e');
+    return [];
+  }
 }
