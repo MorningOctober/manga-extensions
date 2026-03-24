@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.5",
+		version: "0.2.7",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -17,6 +17,33 @@ const mangayomiSources = [
 ];
 
 class DefaultExtension extends MProvider {
+	_parseJsonBody(body, context) {
+		const raw = String(body || "").trim();
+		try {
+			return JSON.parse(raw);
+		} catch (_err) {
+			const firstObj = raw.indexOf("{");
+			const firstArr = raw.indexOf("[");
+			const first =
+				firstObj === -1
+					? firstArr
+					: firstArr === -1
+						? firstObj
+						: Math.min(firstObj, firstArr);
+			const lastObj = raw.lastIndexOf("}");
+			const lastArr = raw.lastIndexOf("]");
+			const last = Math.max(lastObj, lastArr);
+
+			if (first !== -1 && last !== -1 && last > first) {
+				const candidate = raw.slice(first, last + 1);
+				try {
+					return JSON.parse(candidate);
+				} catch (_err2) {}
+			}
+			throw new Error(`Invalid JSON response in ${context}`);
+		}
+	}
+
 	getHeaders(_url) {
 		return { Referer: this.siteBase };
 	}
@@ -74,7 +101,7 @@ class DefaultExtension extends MProvider {
 		const res = await new Client().get(
 			`${this.apiBase}/api/series?sort=rating&order=desc&offset=${offset}&limit=20`,
 		);
-		return this._parseMangaList(JSON.parse(res.body));
+		return this._parseMangaList(this._parseJsonBody(res.body, "getPopular"));
 	}
 
 	async getLatestUpdates(page) {
@@ -82,23 +109,35 @@ class DefaultExtension extends MProvider {
 		const res = await new Client().get(
 			`${this.apiBase}/api/series?sort=latest&order=desc&offset=${offset}&limit=20`,
 		);
-		return this._parseMangaList(JSON.parse(res.body));
+		return this._parseMangaList(
+			this._parseJsonBody(res.body, "getLatestUpdates"),
+		);
 	}
 
 	async search(query, page, filters) {
 		const q = encodeURIComponent(query || "");
 		const offset = (page - 1) * 20;
+		const safeFilters = Array.isArray(filters) ? filters : [];
 
-		const sortBy =
-			filters?.[0]?.values?.[filters[0].state]?.value || "rating";
-		const sortDir =
-			filters?.[1]?.values?.[filters[1].state]?.value || "desc";
-		const status = filters?.[2]?.values?.[filters[2].state]?.value || "";
-		const type = filters?.[3]?.values?.[filters[3].state]?.value || "";
-		const genres = (filters?.[4]?.state || [])
-			.filter((cb) => cb.state)
-			.map((cb) => cb.value)
-			.join(",");
+		const selectValue = (index, fallback) => {
+			const filter = safeFilters[index];
+			if (!filter || !Array.isArray(filter.values)) return fallback;
+			const selected = filter.values[filter.state];
+			if (!selected || selected.value == null) return fallback;
+			return selected.value;
+		};
+
+		const sortBy = selectValue(0, "rating");
+		const sortDir = selectValue(1, "desc");
+		const status = selectValue(2, "");
+		const type = selectValue(3, "");
+		const genreFilter = safeFilters[4];
+		const genres = Array.isArray(genreFilter && genreFilter.state)
+			? genreFilter.state
+					.filter((cb) => cb.state)
+					.map((cb) => cb.value)
+					.join(",")
+			: "";
 
 		let url = `${this.apiBase}/api/series?offset=${offset}&limit=20&sort=${sortBy}&order=${sortDir}`;
 		if (q) url += `&title=${q}`;
@@ -107,7 +146,7 @@ class DefaultExtension extends MProvider {
 		if (genres) url += `&genres=${encodeURIComponent(genres)}`;
 
 		const res = await new Client().get(url);
-		return this._parseMangaList(JSON.parse(res.body));
+		return this._parseMangaList(this._parseJsonBody(res.body, "search"));
 	}
 
 	getFilterList() {
@@ -231,7 +270,7 @@ class DefaultExtension extends MProvider {
 		const seriesRes = await new Client().get(
 			`${this.apiBase}/api/series/${slug}`,
 		);
-		const seriesJson = JSON.parse(seriesRes.body);
+		const seriesJson = this._parseJsonBody(seriesRes.body, "getDetail-series");
 		const s = seriesJson.series || seriesJson;
 
 		const description = (s.description || "").replace(/<[^>]+>/g, "").trim(); // HTML strip
@@ -249,7 +288,11 @@ class DefaultExtension extends MProvider {
 			const chapRes = await new Client().get(
 				`${this.apiBase}/api/series/${slug}/chapters?page=${pageNum}&limit=${limit}`,
 			);
-			const pageData = JSON.parse(chapRes.body).data || [];
+			const pageJson = this._parseJsonBody(
+				chapRes.body,
+				`getDetail-chapters-page-${pageNum}`,
+			);
+			const pageData = pageJson.data || [];
 			allChaps.push(...pageData);
 			if (pageData.length < limit) break;
 			pageNum++;
@@ -272,8 +315,8 @@ class DefaultExtension extends MProvider {
 		const res = await new Client().get(
 			`${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`,
 		);
-		const json = JSON.parse(res.body);
-		const chapter = json.data?.chapter || json;
+		const json = this._parseJsonBody(res.body, "getPageList");
+		const chapter = json.data && json.data.chapter ? json.data.chapter : json;
 		const pages = chapter.pages || [];
 
 		return pages
