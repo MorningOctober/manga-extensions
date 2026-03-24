@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.12",
+		version: "0.2.13",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -514,13 +514,18 @@ class DefaultExtension extends MProvider {
 		const { seriesSlug, chapterSlug } = this._chapterRefFromUrl(url);
 		const endpoint = `${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`;
 
-		const parsePageList = (chapter) => {
-			const pages = chapter?.pages || [];
-			return pages
+		const parsePageList = (pages) => {
+			const sourcePages = Array.isArray(pages) ? pages : [];
+			return sourcePages
 				.map((p, i) =>
 					typeof p === "string"
 						? { url: p, order: i }
-						: { url: p.url, order: p.order != null ? p.order : i },
+						: {
+								url:
+									p.url || p.image_url || p.page_url || p.image || p.src || "",
+								order:
+									p.order != null ? p.order : p.index != null ? p.index : i,
+							},
 				)
 				.filter((p) => !!p.url)
 				.sort((a, b) => a.order - b.order)
@@ -530,29 +535,36 @@ class DefaultExtension extends MProvider {
 		const fetchChapter = async (context) => {
 			const res = await this._apiGet(endpoint, true);
 			const json = this._parseJsonBody(res.body, context);
-			const chapter = json.data?.chapter ? json.data.chapter : json;
-			return chapter;
+			const chapter = json.data?.chapter || json.chapter || json.data || json;
+			const pages = chapter?.pages || json.data?.pages || json.pages || [];
+			const isLocked =
+				chapter?.is_locked ?? json.data?.is_locked ?? json.is_locked ?? false;
+			return { pages, isLocked };
 		};
 
-		let chapter = await fetchChapter("getPageList-initial");
-		let pageList = parsePageList(chapter);
+		let chapterData = await fetchChapter("getPageList-initial");
+		let pageList = parsePageList(chapterData.pages);
 
 		// First request may have only cookie auth; retry with bearer if token was discovered.
-		if (pageList.length === 0 && chapter?.is_locked && this._accessTokenCache) {
-			chapter = await fetchChapter("getPageList-bearer-retry");
-			pageList = parsePageList(chapter);
+		if (
+			pageList.length === 0 &&
+			chapterData.isLocked &&
+			this._accessTokenCache
+		) {
+			chapterData = await fetchChapter("getPageList-bearer-retry");
+			pageList = parsePageList(chapterData.pages);
 		}
 
 		// If bearer token expired, refresh and retry once.
 		if (
 			pageList.length === 0 &&
-			chapter?.is_locked &&
+			chapterData.isLocked &&
 			this._refreshTokenCache
 		) {
 			const refreshed = await this._refreshAccessToken();
 			if (refreshed) {
-				chapter = await fetchChapter("getPageList-refresh-retry");
-				pageList = parsePageList(chapter);
+				chapterData = await fetchChapter("getPageList-refresh-retry");
+				pageList = parsePageList(chapterData.pages);
 			}
 		}
 
@@ -564,7 +576,7 @@ class DefaultExtension extends MProvider {
 				"Chapter appears locked. Login via source WebView, then retry.",
 			);
 		}
-		if (chapter?.is_locked) {
+		if (chapterData.isLocked) {
 			throw new Error("Chapter is locked (premium required on Asura Scans).");
 		}
 		throw new Error("No readable pages found for this chapter");
