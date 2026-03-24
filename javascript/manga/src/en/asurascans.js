@@ -23,6 +23,15 @@ class DefaultExtension extends MProvider {
 			.replace(/\/+$/, "");
 	}
 
+	_normalizeSitePath(path, fallback = "/") {
+		const raw = String(path || "").trim();
+		if (!raw) return fallback;
+		if (/^https?:\/\//i.test(raw)) {
+			return raw;
+		}
+		return raw.startsWith("/") ? raw : `/${raw}`;
+	}
+
 	_parseJsonBody(body, context) {
 		const raw = String(body || "").trim();
 		try {
@@ -79,7 +88,7 @@ class DefaultExtension extends MProvider {
 		path = path.replace(/^\/+/, "").replace(/\/+$/, "");
 
 		const routeMatch = path.match(/(?:^|\/)(?:comics|series)\/([^/]+)/i);
-		if (routeMatch && routeMatch[1]) {
+		if (routeMatch?.[1]) {
 			return routeMatch[1].replace(/-f[0-9a-f]{6,8}$/i, "");
 		}
 
@@ -127,7 +136,10 @@ class DefaultExtension extends MProvider {
 		const list = items.map((item) => ({
 			name: item.title || item.name || "",
 			imageUrl: item.cover || item.cover_url || "",
-			link: item.public_url || (item.slug ? `/comics/${item.slug}` : ""),
+			link: this._normalizeSitePath(
+				item.public_url || (item.slug ? `/comics/${item.slug}` : ""),
+				"/",
+			),
 		}));
 		return { list, hasNextPage: meta.has_more === true };
 	}
@@ -190,7 +202,7 @@ class DefaultExtension extends MProvider {
 		const status = selectValue(2, "");
 		const type = selectValue(3, "");
 		const genreFilter = safeFilters[4];
-		const genres = Array.isArray(genreFilter && genreFilter.state)
+		const genres = Array.isArray(genreFilter?.state)
 			? genreFilter.state
 					.filter((cb) => cb.state)
 					.map((cb) => cb.value)
@@ -333,6 +345,10 @@ class DefaultExtension extends MProvider {
 
 		const description = (s.description || "").replace(/<[^>]+>/g, "").trim(); // HTML strip
 		const imageUrl = s.cover || s.cover_url || "";
+		const seriesPublicUrl = this._normalizeSitePath(
+			s.public_url || `/comics/${slug}`,
+			`/comics/${slug}`,
+		);
 		const author = s.author || "";
 		const artist = s.artist || "";
 		const status = this.toStatus(s.status);
@@ -356,7 +372,7 @@ class DefaultExtension extends MProvider {
 			pageNum++;
 		}
 
-		// chapter url = "seriesSlug||chapterSlug" für getPageList
+		// chapter url is a web path so WebView can open it directly
 		const chapters = allChaps
 			.filter((ch) => !ch.is_locked)
 			.map((ch) => {
@@ -367,7 +383,7 @@ class DefaultExtension extends MProvider {
 					name: chapterTitle
 						? `${chapterLabel} - ${chapterTitle}`
 						: chapterLabel,
-					url: `${slug}||${ch.slug}`,
+					url: `${seriesPublicUrl}/chapter/${ch.slug}`,
 					dateUpload: this.parseDate(ch.published_at),
 				};
 			});
@@ -382,7 +398,7 @@ class DefaultExtension extends MProvider {
 			`${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`,
 		);
 		const json = this._parseJsonBody(res.body, "getPageList");
-		const chapter = json.data && json.data.chapter ? json.data.chapter : json;
+		const chapter = json.data?.chapter ? json.data.chapter : json;
 		const pages = chapter.pages || [];
 
 		const pageList = pages
