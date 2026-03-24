@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.5",
+		version: "0.2.6",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -88,17 +88,27 @@ class DefaultExtension extends MProvider {
 	async search(query, page, filters) {
 		const q = encodeURIComponent(query || "");
 		const offset = (page - 1) * 20;
+		const safeFilters = Array.isArray(filters) ? filters : [];
 
-		const sortBy =
-			filters?.[0]?.values?.[filters[0].state]?.value || "rating";
-		const sortDir =
-			filters?.[1]?.values?.[filters[1].state]?.value || "desc";
-		const status = filters?.[2]?.values?.[filters[2].state]?.value || "";
-		const type = filters?.[3]?.values?.[filters[3].state]?.value || "";
-		const genres = (filters?.[4]?.state || [])
-			.filter((cb) => cb.state)
-			.map((cb) => cb.value)
-			.join(",");
+		const selectValue = (index, fallback) => {
+			const filter = safeFilters[index];
+			if (!filter || !Array.isArray(filter.values)) return fallback;
+			const selected = filter.values[filter.state];
+			if (!selected || selected.value == null) return fallback;
+			return selected.value;
+		};
+
+		const sortBy = selectValue(0, "rating");
+		const sortDir = selectValue(1, "desc");
+		const status = selectValue(2, "");
+		const type = selectValue(3, "");
+		const genreFilter = safeFilters[4];
+		const genres = Array.isArray(genreFilter && genreFilter.state)
+			? genreFilter.state
+					.filter((cb) => cb.state)
+					.map((cb) => cb.value)
+					.join(",")
+			: "";
 
 		let url = `${this.apiBase}/api/series?offset=${offset}&limit=20&sort=${sortBy}&order=${sortDir}`;
 		if (q) url += `&title=${q}`;
@@ -273,7 +283,7 @@ class DefaultExtension extends MProvider {
 			`${this.apiBase}/api/series/${seriesSlug}/chapters/${chapterSlug}`,
 		);
 		const json = JSON.parse(res.body);
-		const chapter = json.data?.chapter || json;
+		const chapter = json.data && json.data.chapter ? json.data.chapter : json;
 		const pages = chapter.pages || [];
 
 		return pages
