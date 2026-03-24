@@ -6,7 +6,7 @@ This repository contains the available extension catalogues for the Mangayomi ap
 
 Click on the button below to add the corresponding repository (Manga only):
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=mangayomi-extensions%26repo_url=https://github.com/morningoctober/mangayomi-extensions%26manga_url=https://morningoctober.github.io/mangayomi-extensions/index.json"><img alt="Add manga repository" src="images/add-manga-repository.png" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=manga-extensions%26repo_url=https://github.com/MorningOctober/manga-extensions%26manga_url=https://morningoctober.github.io/manga-extensions/index.json"><img alt="Add manga repository" src="images/add-manga-repository.png" height="35"></a>
 
 If you installed the app via Live Container, then use the following button instead:
 
@@ -16,7 +16,7 @@ Or add them manually in the app (More -> Settings -> Browse):
 
 manga repo
 ```
-https://morningoctober.github.io/mangayomi-extensions/index.json
+https://morningoctober.github.io/manga-extensions/index.json
 ```
 
 # Contributing

@@ -10,20 +10,20 @@ Before starting please have installed the recent desktop version of the mangayom
 ### Writing your extension
 1. Open the app.
 2. Go to extension tab : 
-![1](https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/screenshots/1.png)
+![1](https://raw.githubusercontent.com/MorningOctober/manga-extensions/screenshots/1.png)
 3. then click `+` and you will see : 
-![2](https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/screenshots/2.png)
+![2](https://raw.githubusercontent.com/MorningOctober/manga-extensions/screenshots/2.png)
 4. Fill in the fields with your new source that you would like to create,
-![3](https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/screenshots/3.png)
+![3](https://raw.githubusercontent.com/MorningOctober/manga-extensions/screenshots/3.png)
 NB: only the `ApiUrl` field is optional
 then click on save
 5. you will see your new source in the extension list
-![4](https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/screenshots/4.png)
+![4](https://raw.githubusercontent.com/MorningOctober/manga-extensions/screenshots/4.png)
 click to open settings
 6. After click on edit code
-![5](https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/screenshots/5.png)
+![5](https://raw.githubusercontent.com/MorningOctober/manga-extensions/screenshots/5.png)
 7. Finally you can now write the extension
-![6](https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/screenshots/6.png)
+![6](https://raw.githubusercontent.com/MorningOctober/manga-extensions/screenshots/6.png)
 - This page contains three parts: 
     - Code editor: where you will write your code 
     - Fecth result: where you will test the different implemented methods by having a result in the expected format
@@ -110,9 +110,9 @@ a.k.a. the Latest source entry point in the app (invoked by tapping on the "Late
 
 ## Example sources that can help you understand how to create your source
 
-- [Example](https://github.com/morningoctober/mangayomi-extensions/blob/main/javascript/anime/src/de/aniworld.js)
+- [Example](https://github.com/MorningOctober/manga-extensions/blob/main/javascript/anime/src/de/aniworld.js)
   of HTML parsing using HTML DOM selector.
-- [Example](https://github.com/morningoctober/mangayomi-extensions/blob/main/javascript/anime/src/en/allanime.js)
+- [Example](https://github.com/MorningOctober/manga-extensions/blob/main/javascript/anime/src/en/allanime.js)
   of Json API usage.
 
   

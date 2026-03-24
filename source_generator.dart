@@ -51,7 +51,7 @@ List<Source> _searchJsSources(Directory dir) {
         ..sourceCodeLanguage = 1
         ..appMinVerReq = sourceJson["appMinVerReq"] ?? defaultSource.appMinVerReq
         ..sourceCodeUrl =
-            "https://raw.githubusercontent.com/morningoctober/mangayomi-extensions/$branchName/javascript/${sourceJson["pkgPath"] ?? sourceJson["pkgName"]}";
+            "https://raw.githubusercontent.com/MorningOctober/manga-extensions/$branchName/javascript/${sourceJson["pkgPath"] ?? sourceJson["pkgName"]}";
       if (sourceJson["id"] != null) {
         source = source..id = int.tryParse("${sourceJson["id"]}");
       }

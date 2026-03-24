@@ -6,7 +6,7 @@ const mangayomiSources = [
 		baseUrl: "https://asurascans.com",
 		apiUrl: "https://api.asurascans.com",
 		iconUrl:
-			"https://raw.githubusercontent.com/m2k3a/mangayomi-extensions/main/javascript/icon/en.asurascans.png",
+			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
 		version: "0.2.0",
