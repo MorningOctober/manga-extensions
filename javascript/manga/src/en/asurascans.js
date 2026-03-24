@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.8",
+		version: "0.2.9",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -354,22 +354,33 @@ class DefaultExtension extends MProvider {
 		const status = this.toStatus(s.status);
 		const genre = (s.genres || []).map((g) => g.name);
 
-		// paginated chapter fetch
+		// Paginate chapters by offset (the API does not reliably advance by page).
 		const allChaps = [];
-		let pageNum = 1;
+		const seenChapterKeys = new Set();
+		let offset = 0;
 		const limit = 100;
 		while (true) {
 			const chapRes = await new Client().get(
-				`${this.apiBase}/api/series/${slug}/chapters?page=${pageNum}&limit=${limit}`,
+				`${this.apiBase}/api/series/${slug}/chapters?offset=${offset}&limit=${limit}`,
 			);
 			const pageJson = this._parseJsonBody(
 				chapRes.body,
-				`getDetail-chapters-page-${pageNum}`,
+				`getDetail-chapters-offset-${offset}`,
 			);
 			const pageData = pageJson.data || [];
-			allChaps.push(...pageData);
-			if (pageData.length < limit) break;
-			pageNum++;
+			if (pageData.length === 0) break;
+
+			let newCount = 0;
+			for (const ch of pageData) {
+				const key = ch.id != null ? String(ch.id) : String(ch.slug || "");
+				if (!key || seenChapterKeys.has(key)) continue;
+				seenChapterKeys.add(key);
+				allChaps.push(ch);
+				newCount++;
+			}
+
+			if (pageData.length < limit || newCount === 0) break;
+			offset += limit;
 		}
 
 		// chapter url is a web path so WebView can open it directly
