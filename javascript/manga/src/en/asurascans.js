@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.13",
+		version: "0.2.14",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
@@ -79,10 +79,15 @@ class DefaultExtension extends MProvider {
 	}
 
 	_cacheAuthTokensFromResponse(response) {
-		const cookieHeader = this._getHeaderValue(
+		const requestCookieHeader = this._getHeaderValue(
 			response?.request?.headers,
 			"cookie",
 		);
+		const responseSetCookieHeader = this._getHeaderValue(
+			response?.headers,
+			"set-cookie",
+		);
+		const cookieHeader = requestCookieHeader || responseSetCookieHeader;
 		if (!cookieHeader) return;
 
 		let accessToken = "";
@@ -127,7 +132,10 @@ class DefaultExtension extends MProvider {
 	}
 
 	async _apiGet(url, useAuth = false) {
-		const res = await new Client().get(url, this._buildApiHeaders(useAuth));
+		const res = await new Client({ useDartHttpClient: true }).get(
+			url,
+			this._buildApiHeaders(useAuth),
+		);
 		this._cacheAuthTokensFromResponse(res);
 		return res;
 	}
@@ -135,7 +143,7 @@ class DefaultExtension extends MProvider {
 	async _refreshAccessToken() {
 		if (!this._refreshTokenCache) return false;
 		try {
-			const res = await new Client().post(
+			const res = await new Client({ useDartHttpClient: true }).post(
 				`${this.apiBase}/api/auth/refresh`,
 				{
 					...this.apiHeaders,
