@@ -315,8 +315,44 @@ class Atsumaru extends MProvider {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return trimmed;
 
+    // Common absolute URL forms.
+    final absoluteMangaUrlMatch = RegExp(
+      r'atsu\.moe\/manga\/([A-Za-z0-9_-]+)',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    if (absoluteMangaUrlMatch != null) {
+      return absoluteMangaUrlMatch.group(1)!;
+    }
+
+    // Broken legacy form seen in WebView redirects: https://atsu.moe<id>
+    final brokenUrlMatch = RegExp(
+      r'atsu\.moe([A-Za-z0-9_-]+)(?:[/?#].*)?$',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+    if (brokenUrlMatch != null) {
+      return brokenUrlMatch.group(1)!;
+    }
+
     final uri = Uri.tryParse(trimmed);
     if (uri != null && (uri.hasScheme || uri.hasAuthority)) {
+      if (uri.host.toLowerCase() == "atsu.moe") {
+        final segments = uri.pathSegments
+            .where((segment) => segment.isNotEmpty)
+            .toList();
+        final mangaIndex = segments.lastIndexOf("manga");
+        if (mangaIndex != -1 && mangaIndex + 1 < segments.length) {
+          return segments[mangaIndex + 1];
+        }
+        if (segments.isNotEmpty) return segments.last;
+      }
+
+      // Another malformed absolute variant where id leaks into the host.
+      final host = uri.host.toLowerCase();
+      if (host.startsWith("atsu.moe") && host.length > "atsu.moe".length) {
+        final leakedId = host.substring("atsu.moe".length);
+        if (leakedId.isNotEmpty) return leakedId;
+      }
+
       final segments = uri.pathSegments.where((segment) => segment.isNotEmpty);
       final segmentList = segments.toList();
       final mangaIndex = segmentList.lastIndexOf("manga");
@@ -343,8 +379,9 @@ class Atsumaru extends MProvider {
   @override
   Future<List<Map<String, dynamic>>> getPageList(String url) async {
     List<Map<String, dynamic>> images = [];
+    final normalizedReadUrl = _normalizeReadUrl(url);
     final res = await client.get(
-      Uri.parse("${source.apiUrl}/read/chapter?mangaId=$url"),
+      Uri.parse("${source.apiUrl}/read/chapter?mangaId=$normalizedReadUrl"),
     );
     final chapterData = json.decode(res.body);
 
@@ -355,6 +392,21 @@ class Atsumaru extends MProvider {
       images.add({"url": "${source.baseUrl}${imageObject["image"]}"});
     }
     return images;
+  }
+
+  String _normalizeReadUrl(String rawUrl) {
+    final trimmed = rawUrl.trim();
+    if (trimmed.isEmpty) return trimmed;
+
+    final chapterIdMatch = RegExp(
+      r'(?:^|&)chapterId=([^&]+)',
+    ).firstMatch(trimmed);
+    if (chapterIdMatch == null) return _normalizeMangaId(trimmed);
+
+    final chapterId = chapterIdMatch.group(1) ?? "";
+    final mangaPart = trimmed.split("&chapterId=").first;
+    final mangaId = _normalizeMangaId(mangaPart);
+    return "$mangaId&chapterId=$chapterId";
   }
 
   @override
