@@ -1,6 +1,5 @@
-import 'dart:convert';
-
 import 'package:mangayomi/bridge_lib.dart';
+import 'dart:convert';
 
 class OmegaScans extends MProvider {
   OmegaScans({required this.source});
