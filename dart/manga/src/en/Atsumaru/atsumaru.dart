@@ -46,10 +46,11 @@ class Atsumaru extends MProvider {
     final items = (jsonResponse["items"] ?? []) as List<dynamic>;
 
     for (final item in items) {
+      final mangaId = (item["id"] ?? "").toString();
       MManga manga = MManga();
       manga.name = (item["title"] ?? "").toString();
       manga.imageUrl = "${source.baseUrl}/static/${item["image"] ?? ""}";
-      manga.link = (item["id"] ?? "").toString();
+      manga.link = mangaId.isNotEmpty ? _mangaWebPath(mangaId) : "";
       mangaList.add(manga);
     }
     body["page"] = page + 1;
@@ -166,6 +167,7 @@ class Atsumaru extends MProvider {
 
   @override
   Future<MManga> getDetail(String id) async {
+    final mangaId = _normalizeMangaId(id);
     final statusList = [
       {
         "Pending": 0,
@@ -179,7 +181,7 @@ class Atsumaru extends MProvider {
     ];
 
     final res = await client.get(
-      Uri.parse("${source.baseUrl}/manga/$id"),
+      Uri.parse("${source.baseUrl}${_mangaWebPath(mangaId)}"),
       headers: {
         "Accept": "*/*",
         "accept-language":
@@ -204,7 +206,7 @@ class Atsumaru extends MProvider {
     if (jsonMatch == null) {
       MManga fallbackManga = MManga();
       fallbackManga.name = "No Title";
-      fallbackManga.link = id;
+      fallbackManga.link = mangaId.isNotEmpty ? _mangaWebPath(mangaId) : id;
       fallbackManga.imageUrl = "";
       fallbackManga.genre = [];
       fallbackManga.author = "";
@@ -245,12 +247,12 @@ class Atsumaru extends MProvider {
           acc[scanlator["id"].toString()] = scanlator["name"].toString();
           return acc;
         });
-    final chapters = await getChapters(id, {...scanlators});
+    final chapters = await getChapters(mangaId, {...scanlators});
 
     MManga manga = MManga();
 
     manga.name = name;
-    manga.link = id;
+    manga.link = _mangaWebPath(mangaId);
     manga.imageUrl = "${source.baseUrl}/static/$imageUrl";
     manga.genre = genres;
     manga.author = authors.join(", ");
@@ -266,10 +268,13 @@ class Atsumaru extends MProvider {
     String id,
     Map<String, String> scanlators,
   ) async {
+    final mangaId = _normalizeMangaId(id);
     List<MChapter> chapters = [];
 
     final res = await client.get(
-      Uri.parse("${source.apiUrl}/manga/allChapters?mangaId=$id"),
+      Uri.parse(
+        "${source.apiUrl}/manga/allChapters?mangaId=${Uri.encodeQueryComponent(mangaId)}",
+      ),
       headers: {
         "Accept": "*/*",
         "accept-language":
@@ -283,7 +288,7 @@ class Atsumaru extends MProvider {
       final dateUpload = _parseDateUpload(chap["createdAt"]);
       final chapter = MChapter()
         ..name = (chap["title"] ?? "").toString()
-        ..url = "$id&chapterId=${chap["id"] ?? ""}"
+        ..url = "$mangaId&chapterId=${chap["id"] ?? ""}"
         ..dateUpload = dateUpload
         ..description = "${chap['pageCount']} Pages"
         ..scanlator =
@@ -302,6 +307,37 @@ class Atsumaru extends MProvider {
       return parsed?.millisecondsSinceEpoch.toString();
     }
     return null;
+  }
+
+  String _mangaWebPath(String mangaId) => "/manga/$mangaId";
+
+  String _normalizeMangaId(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return trimmed;
+
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null && (uri.hasScheme || uri.hasAuthority)) {
+      final segments = uri.pathSegments.where((segment) => segment.isNotEmpty);
+      final segmentList = segments.toList();
+      final mangaIndex = segmentList.lastIndexOf("manga");
+      if (mangaIndex != -1 && mangaIndex + 1 < segmentList.length) {
+        return segmentList[mangaIndex + 1];
+      }
+      if (segmentList.isNotEmpty) return segmentList.last;
+    }
+
+    var normalized = trimmed.split("?").first.split("#").first;
+    if (!normalized.contains("/")) return normalized;
+
+    final segments = normalized
+        .split("/")
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    final mangaIndex = segments.lastIndexOf("manga");
+    if (mangaIndex != -1 && mangaIndex + 1 < segments.length) {
+      return segments[mangaIndex + 1];
+    }
+    return segments.isNotEmpty ? segments.last : normalized;
   }
 
   @override
