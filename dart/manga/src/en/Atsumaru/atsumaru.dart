@@ -6,16 +6,15 @@ class Atsumaru extends MProvider {
 
   MSource source;
 
-  final Client client = Client(source);
+  final Client client = Client();
 
-  @override
   Future<MPages> getMangaItems(
     int page,
     final method,
     String searchString,
     filters,
   ) async {
-    List<MPages> mangaList = [];
+    List<MManga> mangaList = [];
     final body = {
       "filter": {
         "search": filters["search"] ?? searchString,
@@ -44,13 +43,13 @@ class Atsumaru extends MProvider {
     );
 
     final jsonResponse = json.decode(res.body);
-    final items = jsonResponse["items"];
+    final items = (jsonResponse["items"] ?? []) as List<dynamic>;
 
     for (final item in items) {
       MManga manga = MManga();
-      manga.name = item["title"];
-      manga.imageUrl = "${source.baseUrl}/static/${item["image"]}";
-      manga.link = item["id"];
+      manga.name = (item["title"] ?? "").toString();
+      manga.imageUrl = "${source.baseUrl}/static/${item["image"] ?? ""}";
+      manga.link = (item["id"] ?? "").toString();
       mangaList.add(manga);
     }
     body["page"] = page + 1;
@@ -65,19 +64,21 @@ class Atsumaru extends MProvider {
       body: json.encode(body),
     );
 
-    final hasNext = json.decode(hasNextReq.body)["items"].isEmpty;
+    final nextItems =
+        (json.decode(hasNextReq.body)["items"] ?? []) as List<dynamic>;
+    final hasNext = nextItems.isNotEmpty;
 
-    return MPages(mangaList, !hasNext);
+    return MPages(mangaList, hasNext);
   }
 
   @override
   Future<MPages> getPopular(int page) async {
-    return getMangaItems(page, "popularity", "", {});
+    return getMangaItems(page - 1, "popularity", "", {});
   }
 
   @override
   Future<MPages> getLatestUpdates(int page) async {
-    return getMangaItems(page, "released", "", {});
+    return getMangaItems(page - 1, "released", "", {});
   }
 
   @override
@@ -105,7 +106,9 @@ class Atsumaru extends MProvider {
           selectedFilters["search"] = filter.state.toString();
         }
       } else if (filter.type == "SortFilter") {
-        selectedFilters["sortBy"] = filter.values[filter.state].value ?? "";
+        if (filter.state >= 0 && filter.state < filter.values.length) {
+          selectedFilters["sortBy"] = filter.values[filter.state].value ?? "";
+        }
       } else if (filter.type == "TypeFilter") {
         final types = [];
         for (var type in filter.state ?? []) {
@@ -142,7 +145,9 @@ class Atsumaru extends MProvider {
           }
         }
         selectedFilters["years"] = years;
-      } else if (filter.type == "TranslationsFilter") {
+      } else if ((filter is CheckBoxFilter &&
+              filter.value == "TranslationsFilter") ||
+          filter.type == "TranslationsFilter") {
         selectedFilters["officialTranslation"] = filter.state;
       }
     }
@@ -167,6 +172,7 @@ class Atsumaru extends MProvider {
         "Ongoing": 0,
         "Completed": 1,
         "Hiatus": 2,
+        "Canceled": 3,
         "Cancelled": 3,
         "Unknown": 5,
       },
@@ -183,36 +189,71 @@ class Atsumaru extends MProvider {
     );
     final doc = parseHtml(res.body);
 
-    final contentJson = doc.select("head > script")[1].text;
-    final json = json.decode(
-      contentJson.replaceAll("window.mangaPage = ", "").replaceAll(";", ""),
-    )["mangaPage"];
+    String contentJson = "";
+    for (final script in doc.select("script")) {
+      if (script.text.contains("window.mangaPage")) {
+        contentJson = script.text;
+        break;
+      }
+    }
 
-    final name = json["englishTitle"] ?? json["title"] ?? "No Title";
-    final imageUrl = json["poster"]?["image"];
-    final description =
-        json["synopsis"] +
-        (json["otherNames"] is List
-            ? "\n\nAlternative Titles:\n" +
-                  (json["otherNames"] ?? []).join("\n")
-            : "");
-    final status = json["status"] ?? "Unknown";
-    final authors = json["authors"]?.map((author) => author["name"]) ?? "None";
+    final jsonMatch = RegExp(
+      r'window\.mangaPage\s*=\s*(\{.*\})\s*;?',
+      dotAll: true,
+    ).firstMatch(contentJson);
+    if (jsonMatch == null) {
+      MManga fallbackManga = MManga();
+      fallbackManga.name = "No Title";
+      fallbackManga.link = id;
+      fallbackManga.imageUrl = "";
+      fallbackManga.genre = [];
+      fallbackManga.author = "";
+      fallbackManga.artist = "";
+      fallbackManga.chapters = [];
+      fallbackManga.description = "";
+      fallbackManga.status = parseStatus("Unknown", statusList);
+      return fallbackManga;
+    }
+    final mangaData = json.decode(jsonMatch.group(1)!)["mangaPage"];
+
+    final name = (mangaData["englishTitle"] ?? mangaData["title"] ?? "No Title")
+        .toString();
+    final imageUrl = (mangaData["poster"]?["image"] ?? "").toString();
+    final synopsis = (mangaData["synopsis"] ?? "").toString();
+    final otherNames = ((mangaData["otherNames"] ?? []) as List<dynamic>)
+        .map((name) => name.toString())
+        .where((name) => name.isNotEmpty)
+        .toList();
+    final description = otherNames.isNotEmpty
+        ? "$synopsis\n\nAlternative Titles:\n${otherNames.join("\n")}"
+        : synopsis;
+    final status = (mangaData["status"] ?? "Unknown").toString();
+    final authors = ((mangaData["authors"] ?? []) as List<dynamic>)
+        .map((author) => (author["name"] ?? "").toString())
+        .where((author) => author.isNotEmpty)
+        .toList();
     final genres =
-        json["tags"]?.map((tag) => tag["name"]) ??
-        json["genres"]?.map((genre) => genre["name"]) ??
-        [];
-    final chapters = await getChapters(id, {
-      for (var s in json["scanlators"]) s["id"]: s["name"],
-    });
+        (((mangaData["tags"] ?? mangaData["genres"] ?? []) as List<dynamic>)
+            .map((genre) => (genre["name"] ?? "").toString())
+            .where((genre) => genre.isNotEmpty)
+            .toList());
+    final scanlators = ((mangaData["scanlators"] ?? []) as List<dynamic>)
+        .where(
+          (scanlator) => scanlator["id"] != null && scanlator["name"] != null,
+        )
+        .fold<Map<String, String>>({}, (acc, scanlator) {
+          acc[scanlator["id"].toString()] = scanlator["name"].toString();
+          return acc;
+        });
+    final chapters = await getChapters(id, {...scanlators});
 
     MManga manga = MManga();
 
     manga.name = name;
     manga.link = id;
     manga.imageUrl = "${source.baseUrl}/static/$imageUrl";
-    manga.genre = "$genres".replaceAll(RegExp(r'[()]'), '').split(", ");
-    manga.author = "$authors".replaceAll(RegExp(r'[()]'), '');
+    manga.genre = genres;
+    manga.author = authors.join(", ");
     manga.artist = manga.author;
     manga.chapters = chapters;
     manga.description = description;
@@ -237,17 +278,30 @@ class Atsumaru extends MProvider {
       },
     );
 
-    final chaps = json.decode(res.body)?["chapters"] ?? [];
+    final chaps = (json.decode(res.body)?["chapters"] ?? []) as List<dynamic>;
     for (final chap in chaps) {
+      final dateUpload = _parseDateUpload(chap["createdAt"]);
       final chapter = MChapter()
-        ..name = chap["title"]
-        ..url = "$id&chapterId=${chap["id"]}"
-        ..dateUpload = "${chap["createdAt"]}"
+        ..name = (chap["title"] ?? "").toString()
+        ..url = "$id&chapterId=${chap["id"] ?? ""}"
+        ..dateUpload = dateUpload
         ..description = "${chap['pageCount']} Pages"
-        ..scanlator = scanlators[chap["scanlationMangaId"]] ?? "Unknown";
+        ..scanlator =
+            scanlators[(chap["scanlationMangaId"] ?? "").toString()] ??
+            "Unknown";
       chapters.add(chapter);
     }
     return chapters;
+  }
+
+  String? _parseDateUpload(dynamic createdAt) {
+    if (createdAt == null) return null;
+    if (createdAt is int) return createdAt.toString();
+    if (createdAt is String && createdAt.isNotEmpty) {
+      final parsed = DateTime.tryParse(createdAt);
+      return parsed?.millisecondsSinceEpoch.toString();
+    }
+    return null;
   }
 
   @override
@@ -256,9 +310,10 @@ class Atsumaru extends MProvider {
     final res = await client.get(
       Uri.parse("${source.apiUrl}/read/chapter?mangaId=$url"),
     );
-    final json = json.decode(res.body);
+    final chapterData = json.decode(res.body);
 
-    final imageObjects = json["readChapter"]["pages"];
+    final imageObjects =
+        (chapterData["readChapter"]?["pages"] ?? []) as List<dynamic>;
 
     for (final imageObject in imageObjects) {
       images.add({"url": "${source.baseUrl}${imageObject["image"]}"});
@@ -392,7 +447,7 @@ class Atsumaru extends MProvider {
         CheckBoxFilter("1971", "1971"),
         CheckBoxFilter("1970", "1970"),
       ]),
-      CheckBoxFilter("Only show official tanslations", "TranslationsFilter"),
+      CheckBoxFilter("Only show official translations", "TranslationsFilter"),
     ];
   }
 
@@ -411,10 +466,11 @@ class Atsumaru extends MProvider {
   }
 
   bool preferenceNsfwContent() {
-    return getPreferenceValue(source.id, "NsfwFilter") == "1";
+    return getPreferenceValue(source.id ?? 0, "NsfwFilter") == "1";
   }
 }
 
+// ignore: main_first_positional_parameter_type
 Atsumaru main(MSource source) {
   return Atsumaru(source: source);
 }

@@ -1,2 +1,6 @@
 .vscode/
-
+**/.dart_tool/
+dart/pubspec.lock
+dart/lib/
+pubspec.yaml
+claude.md
