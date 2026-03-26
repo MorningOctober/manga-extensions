@@ -4,7 +4,7 @@ import 'dart:convert';
 class OmegaScans extends MProvider {
   OmegaScans({required this.source});
 
-  final MSource source;
+  MSource source;
   final Client client = Client();
 
   static const _defaultPerPage = "20";
@@ -15,6 +15,15 @@ class OmegaScans extends MProvider {
     _TagOption(name: "Romance", id: "1"),
     _TagOption(name: "MILF", id: "16"),
   ];
+
+  @override
+  bool get supportsLatest => true;
+
+  @override
+  String? get baseUrl => source.baseUrl;
+
+  @override
+  Map<String, String> get headers => _headers;
 
   Map<String, String> get _headers => {
     "Accept": "*/*",
@@ -233,7 +242,7 @@ class OmegaScans extends MProvider {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getPageList(String url) async {
+  Future<List<String>> getPageList(String url) async {
     final ref = _extractChapterRef(url);
     final res = await client.get(
       _apiUri("/chapter/${ref.seriesSlug}/${ref.chapterSlug}"),
@@ -247,14 +256,29 @@ class OmegaScans extends MProvider {
     final chapterData = chapter["chapter_data"] as Map<String, dynamic>? ?? {};
     final images = chapterData["images"] as List<dynamic>? ?? [];
 
-    final pages = <Map<String, dynamic>>[];
+    final pages = <String>[];
     for (final image in images) {
       final imageUrl = _extractImageUrl(image);
       if (imageUrl.isEmpty) continue;
-      pages.add({"url": _toAbsoluteUrl(imageUrl)});
+      pages.add(_toAbsoluteUrl(imageUrl));
     }
 
     return pages;
+  }
+
+  @override
+  Future<String> getHtmlContent(String name, String url) async {
+    return "";
+  }
+
+  @override
+  Future<String> cleanHtmlContent(String html) async {
+    return html;
+  }
+
+  @override
+  Future<List<Video>> getVideoList(String url) async {
+    return [];
   }
 
   String _buildDescription(Map<String, dynamic> data) {
