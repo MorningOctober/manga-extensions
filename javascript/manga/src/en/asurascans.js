@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
 		typeSource: "single",
 		itemType: 0,
-		version: "0.2.14",
+		version: "0.2.15",
 		dateFormat: "",
 		dateFormatLocale: "",
 		pkgPath: "manga/src/en/asurascans.js",
