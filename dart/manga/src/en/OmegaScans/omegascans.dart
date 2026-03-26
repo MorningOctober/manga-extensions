@@ -357,8 +357,7 @@ class OmegaScans extends MProvider {
       item.name = chapterTitle.isEmpty
           ? chapterName
           : "$chapterName - $chapterTitle";
-      item.url =
-          "${source.baseUrl ?? "https://omegascans.org"}/series/$seriesSlug/$chapterSlug";
+      item.url = "$seriesSlug||$chapterSlug";
       item.dateUpload = _parseDateUpload(chapter["created_at"]);
       item.thumbnailUrl = _toAbsoluteUrl(
         _asString(chapter["chapter_thumbnail"]),
@@ -427,8 +426,7 @@ class OmegaScans extends MProvider {
 
       final item = MChapter();
       item.name = displayName;
-      item.url =
-          "${source.baseUrl ?? "https://omegascans.org"}/series/$seriesSlug/$chapterSlug";
+      item.url = "$seriesSlug||$chapterSlug";
       item.dateUpload = _parseDateUpload(createdAt);
       item.thumbnailUrl = _toAbsoluteUrl(thumbnail);
       if (price > 0) {
@@ -740,6 +738,17 @@ class OmegaScans extends MProvider {
       );
     }
 
+    final absoluteApiStyle = RegExp(
+      r'omegascans\.org\/chapter\/([^\/?#]+)\/([^\/?#]+)',
+      caseSensitive: false,
+    ).firstMatch(value);
+    if (absoluteApiStyle != null) {
+      return _ChapterRef(
+        seriesSlug: absoluteApiStyle.group(1)!,
+        chapterSlug: absoluteApiStyle.group(2)!,
+      );
+    }
+
     final cleaned = value.split("?").first.split("#").first;
     final segments = cleaned.split("/").where((s) => s.isNotEmpty).toList();
     final seriesIndex = segments.lastIndexOf("series");
@@ -747,6 +756,14 @@ class OmegaScans extends MProvider {
       return _ChapterRef(
         seriesSlug: segments[seriesIndex + 1],
         chapterSlug: segments[seriesIndex + 2],
+      );
+    }
+
+    final chapterIndex = segments.lastIndexOf("chapter");
+    if (chapterIndex != -1 && chapterIndex + 2 < segments.length) {
+      return _ChapterRef(
+        seriesSlug: segments[chapterIndex + 1],
+        chapterSlug: segments[chapterIndex + 2],
       );
     }
 
