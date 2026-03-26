@@ -45,6 +45,7 @@ class OmegaScans extends MProvider {
     required String status,
     required List<String> tagIds,
   }) async {
+    final normalizedPage = _normalizePage(page);
     final res = await client.get(
       _apiUri("/query", {
         "perPage": _defaultPerPage,
@@ -55,7 +56,7 @@ class OmegaScans extends MProvider {
         "order": order,
         "status": status,
         "tags_ids": _encodeTagIds(tagIds),
-        "page": page.toString(),
+        "page": normalizedPage.toString(),
       }),
       headers: _headers,
     );
@@ -64,7 +65,9 @@ class OmegaScans extends MProvider {
     final data = (jsonResponse["data"] as List<dynamic>? ?? []);
     final meta = (jsonResponse["meta"] as Map<String, dynamic>? ?? {});
 
-    final currentPage = int.tryParse("${meta["current_page"] ?? page}") ?? page;
+    final currentPage =
+        int.tryParse("${meta["current_page"] ?? normalizedPage}") ??
+        normalizedPage;
     final lastPage =
         int.tryParse("${meta["last_page"] ?? currentPage}") ?? currentPage;
 
@@ -311,6 +314,8 @@ class OmegaScans extends MProvider {
     if (ids.isEmpty) return "[]";
     return "[${ids.join(",")}]";
   }
+
+  int _normalizePage(int page) => page < 1 ? 1 : page;
 
   String _firstNotEmpty(List<String> values) {
     for (final value in values) {
