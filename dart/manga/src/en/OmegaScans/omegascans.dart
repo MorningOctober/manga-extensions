@@ -8,7 +8,7 @@ class OmegaScans extends MProvider {
   final Client client = Client();
 
   static const _defaultPerPage = "20";
-  static const _availableTags = [
+  static const List<Map<String, String>> _availableTags = [
     {"name": "Drama", "id": "2"},
     {"name": "Harem", "id": "8"},
     {"name": "Fantasy", "id": "3"},
@@ -32,9 +32,17 @@ class OmegaScans extends MProvider {
 
   Uri _apiUri(String path, [Map<String, String>? queryParameters]) {
     final base = "${source.apiUrl ?? "https://api.omegascans.org"}$path";
-    final uri = Uri.parse(base);
-    if (queryParameters == null) return uri;
-    return uri.replace(queryParameters: queryParameters);
+    if (queryParameters == null || queryParameters.isEmpty) {
+      return Uri.parse(base);
+    }
+
+    final query = queryParameters.entries
+        .map(
+          (entry) =>
+              "${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(entry.value)}",
+        )
+        .join("&");
+    return Uri.parse("$base?$query");
   }
 
   Future<MPages> _fetchSeriesPage(
@@ -71,14 +79,32 @@ class OmegaScans extends MProvider {
     final lastPage =
         int.tryParse("${meta["last_page"] ?? currentPage}") ?? currentPage;
 
-    final list = data.map(_mapSeriesToManga).toList();
-    return MPages(list, currentPage < lastPage);
+    final mangaList = <MManga>[];
+    for (final raw in data) {
+      mangaList.add(_mapSeriesToManga(raw));
+    }
+
+    return MPages(mangaList, currentPage < lastPage);
   }
 
   MManga _mapSeriesToManga(dynamic raw) {
     final item = _asMap(raw);
     final slug = _asString(item["series_slug"]);
     final manga = MManga();
+    final author = _firstNotEmpty([
+      _asString(item["author"]),
+      _asString(item["studio"]),
+    ]);
+    final statusList = [
+      {
+        "ongoing": 0,
+        "completed": 1,
+        "hiatus": 2,
+        "dropped": 3,
+        "canceled": 3,
+        "cancelled": 3,
+      },
+    ];
 
     manga.name = _firstNotEmpty([
       _asString(item["title"]),
@@ -87,6 +113,14 @@ class OmegaScans extends MProvider {
     ]);
     manga.imageUrl = _toAbsoluteUrl(_asString(item["thumbnail"]));
     manga.link = slug.isEmpty ? "" : "/series/$slug";
+    manga.description = _cleanDescriptionText(_asString(item["description"]));
+    manga.author = author;
+    manga.artist = author;
+    manga.genre = _extractGenres(item["tags"]);
+    manga.status = parseStatus(
+      _asString(item["status"]).toLowerCase(),
+      statusList,
+    );
 
     return manga;
   }
@@ -201,24 +235,109 @@ class OmegaScans extends MProvider {
       _asString(data["status"]).toLowerCase(),
       statusList,
     );
-    manga.chapters = await _getChapters(slug);
+    manga.chapters = await _getChapters(slug, fallbackTitle: title);
+    print(
+      "OmegaScans/getDetail slug=$slug chapters=${manga.chapters?.length ?? 0}",
+    );
 
     return manga;
   }
 
-  Future<List<MChapter>> _getChapters(String seriesSlug) async {
+  Future<List<MChapter>> _getChapters(
+    String seriesSlug, {
+    String? fallbackTitle,
+  }) async {
     if (seriesSlug.isEmpty) return [];
+
+    final chapters = await _getChaptersFromEndpoint(seriesSlug);
+    if (chapters.isNotEmpty) return chapters;
+
+    if (fallbackTitle != null && fallbackTitle.trim().isNotEmpty) {
+      final queryFallback = await _getChaptersFromQuery(
+        fallbackTitle,
+        preferredSlug: seriesSlug,
+      );
+      if (queryFallback.isNotEmpty) return queryFallback;
+    }
+
+    return [];
+  }
+
+  Future<List<MChapter>> _getChaptersFromEndpoint(String seriesSlug) async {
     final res = await client.get(
       _apiUri("/chapter/all/$seriesSlug"),
       headers: _headers,
     );
-    final data = _asList(_decodeJsonSafe(res.body));
-    final chapters = <MChapter>[];
 
-    for (final raw in data) {
+    final decoded = _decodeJsonSafe(res.body);
+    var rawChapters = _asList(decoded);
+    if (rawChapters.isEmpty) {
+      final payload = _asMap(decoded);
+      rawChapters = _asList(payload["chapters"]);
+      if (rawChapters.isEmpty) rawChapters = _asList(payload["data"]);
+      if (rawChapters.isEmpty) rawChapters = _asList(payload["results"]);
+    }
+
+    final mapped = _mapChapters(rawChapters, seriesSlug);
+    if (mapped.isNotEmpty) return mapped;
+
+    return _mapChaptersFromRawBody(res.body, seriesSlug);
+  }
+
+  Future<List<MChapter>> _getChaptersFromQuery(
+    String query, {
+    required String preferredSlug,
+  }) async {
+    final res = await client.get(
+      _apiUri("/query", {
+        "perPage": _defaultPerPage,
+        "series_type": "Comic",
+        "query_string": query,
+        "orderBy": "updated_at",
+        "adult": "true",
+        "order": "desc",
+        "status": "All",
+        "tags_ids": "[]",
+        "page": "1",
+      }),
+      headers: _headers,
+    );
+
+    final payload = _asMap(_decodeJsonSafe(res.body));
+    final seriesList = _asList(payload["data"]);
+    if (seriesList.isEmpty) return [];
+
+    Map<String, dynamic> series = _asMap(seriesList.first);
+    for (final raw in seriesList) {
+      final candidate = _asMap(raw);
+      if (_asString(candidate["series_slug"]) == preferredSlug) {
+        series = candidate;
+        break;
+      }
+    }
+
+    final slug = _firstNotEmpty([
+      _asString(series["series_slug"]),
+      preferredSlug,
+    ]);
+    if (slug.isEmpty) return [];
+
+    final merged = <dynamic>[
+      ..._asList(series["free_chapters"]),
+      ..._asList(series["paid_chapters"]),
+    ];
+    return _mapChapters(merged, slug);
+  }
+
+  List<MChapter> _mapChapters(List<dynamic> rawChapters, String seriesSlug) {
+    final chapters = <MChapter>[];
+    final seen = <String>{};
+
+    for (final raw in rawChapters) {
       final chapter = _asMap(raw);
       final chapterSlug = _asString(chapter["chapter_slug"]);
-      if (chapterSlug.isEmpty) continue;
+      if (chapterSlug.isEmpty || seen.contains(chapterSlug)) continue;
+      seen.add(chapterSlug);
 
       final chapterName = _firstNotEmpty([
         _asString(chapter["chapter_name"]),
@@ -232,11 +351,77 @@ class OmegaScans extends MProvider {
       item.name = chapterTitle.isEmpty
           ? chapterName
           : "$chapterName - $chapterTitle";
-      item.url = "$seriesSlug||$chapterSlug";
+      item.url = "/series/$seriesSlug/$chapterSlug";
       item.dateUpload = _parseDateUpload(chapter["created_at"]);
       item.thumbnailUrl = _toAbsoluteUrl(
         _asString(chapter["chapter_thumbnail"]),
       );
+      if (price > 0) {
+        item.description = "Premium chapter ($price coins)";
+      }
+      chapters.add(item);
+    }
+
+    return chapters;
+  }
+
+  List<MChapter> _mapChaptersFromRawBody(String rawBody, String seriesSlug) {
+    if (rawBody.trim().isEmpty) return [];
+
+    final slugMatches = RegExp(
+      r'"chapter_slug"\s*:\s*"([^"]+)"',
+    ).allMatches(rawBody).toList();
+    if (slugMatches.isEmpty) return [];
+
+    final nameMatches = RegExp(
+      r'"chapter_name"\s*:\s*"([^"]*)"',
+    ).allMatches(rawBody).toList();
+    final titleMatches = RegExp(
+      r'"chapter_title"\s*:\s*(?:"([^"]*)"|null)',
+    ).allMatches(rawBody).toList();
+    final dateMatches = RegExp(
+      r'"created_at"\s*:\s*"([^"]+)"',
+    ).allMatches(rawBody).toList();
+    final thumbnailMatches = RegExp(
+      r'"chapter_thumbnail"\s*:\s*(?:"([^"]*)"|null)',
+    ).allMatches(rawBody).toList();
+    final priceMatches = RegExp(
+      r'"price"\s*:\s*(\d+)',
+    ).allMatches(rawBody).toList();
+
+    final chapters = <MChapter>[];
+    final seen = <String>{};
+
+    for (var i = 0; i < slugMatches.length; i++) {
+      final chapterSlug = _decodeHtmlEntities(slugMatches[i].group(1) ?? "")
+          .trim();
+      if (chapterSlug.isEmpty || seen.contains(chapterSlug)) continue;
+      seen.add(chapterSlug);
+
+      final chapterName = i < nameMatches.length
+          ? _decodeHtmlEntities(nameMatches[i].group(1) ?? "").trim()
+          : "";
+      final chapterTitle = i < titleMatches.length
+          ? _decodeHtmlEntities(titleMatches[i].group(1) ?? "").trim()
+          : "";
+      final createdAt = i < dateMatches.length ? dateMatches[i].group(1) : null;
+      final thumbnail = i < thumbnailMatches.length
+          ? _decodeHtmlEntities(thumbnailMatches[i].group(1) ?? "").trim()
+          : "";
+      final price = i < priceMatches.length
+          ? int.tryParse(priceMatches[i].group(1) ?? "0") ?? 0
+          : 0;
+
+      final fallbackName = chapterSlug.replaceAll("-", " ").trim();
+      final displayName = chapterTitle.isEmpty
+          ? _firstNotEmpty([chapterName, fallbackName, chapterSlug])
+          : "${_firstNotEmpty([chapterName, fallbackName, chapterSlug])} - $chapterTitle";
+
+      final item = MChapter();
+      item.name = displayName;
+      item.url = "/series/$seriesSlug/$chapterSlug";
+      item.dateUpload = _parseDateUpload(createdAt);
+      item.thumbnailUrl = _toAbsoluteUrl(thumbnail);
       if (price > 0) {
         item.description = "Premium chapter ($price coins)";
       }
@@ -288,8 +473,10 @@ class OmegaScans extends MProvider {
   }
 
   String _buildDescription(Map<String, dynamic> data) {
-    final description = _asString(data["description"]);
-    final alternativeNames = _asString(data["alternative_names"]);
+    final description = _cleanDescriptionText(_asString(data["description"]));
+    final alternativeNames = _formatAlternativeNames(
+      _asString(data["alternative_names"]),
+    );
     if (alternativeNames.isEmpty) return description;
     if (description.isEmpty) return "Alternative names:\n$alternativeNames";
     return "$description\n\nAlternative names:\n$alternativeNames";
@@ -314,7 +501,37 @@ class OmegaScans extends MProvider {
     }
   }
 
+  dynamic _normalizeBridgedValue(dynamic value) {
+    if (value == null) return null;
+    if (value is Map || value is List) return value;
+
+    if (value is String) {
+      final trimmed = value.trim();
+      final maybeJson =
+          (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+          (trimmed.startsWith("[") && trimmed.endsWith("]"));
+      if (maybeJson) {
+        final decoded = _decodeJsonSafe(trimmed);
+        if (decoded != null) return decoded;
+      }
+    }
+
+    try {
+      final normalized = json.decode(json.encode(value));
+      if (normalized != null) return normalized;
+    } catch (_) {}
+
+    try {
+      // ignore: avoid_dynamic_calls
+      final toJsonValue = (value as dynamic).toJson();
+      if (toJsonValue != null) return toJsonValue;
+    } catch (_) {}
+
+    return value;
+  }
+
   Map<String, dynamic> _asMap(dynamic value) {
+    value = _normalizeBridgedValue(value);
     if (value is Map<String, dynamic>) return value;
     if (value is Map) {
       return value.map((key, val) => MapEntry(key.toString(), val));
@@ -323,12 +540,72 @@ class OmegaScans extends MProvider {
   }
 
   List<dynamic> _asList(dynamic value) {
+    value = _normalizeBridgedValue(value);
     if (value is List<dynamic>) return value;
     if (value is List) return List<dynamic>.from(value);
     return <dynamic>[];
   }
 
   String _asString(dynamic value) => value?.toString().trim() ?? "";
+
+  String _decodeHtmlEntities(String input) {
+    if (input.isEmpty) return input;
+    var value = input;
+
+    final named = <String, String>{
+      "&amp;": "&",
+      "&lt;": "<",
+      "&gt;": ">",
+      "&quot;": "\"",
+      "&#39;": "'",
+      "&apos;": "'",
+      "&nbsp;": " ",
+      "&hellip;": "...",
+      "&ldquo;": "\"",
+      "&rdquo;": "\"",
+      "&lsquo;": "'",
+      "&rsquo;": "'",
+      "&mdash;": "-",
+      "&ndash;": "-",
+    };
+    named.forEach((entity, char) {
+      value = value.replaceAll(entity, char);
+    });
+
+    value = value.replaceAllMapped(RegExp(r'&#(\d+);'), (match) {
+      final codePoint = int.tryParse(match.group(1)!);
+      return codePoint == null ? match.group(0)! : String.fromCharCode(codePoint);
+    });
+    value = value.replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (match) {
+      final codePoint = int.tryParse(match.group(1)!, radix: 16);
+      return codePoint == null ? match.group(0)! : String.fromCharCode(codePoint);
+    });
+
+    return value;
+  }
+
+  String _cleanDescriptionText(String htmlLikeText) {
+    var value = _decodeHtmlEntities(htmlLikeText).trim();
+    if (value.isEmpty) return value;
+
+    value = value.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), "\n");
+    value = value.replaceAll(RegExp(r'</p\s*>', caseSensitive: false), "\n\n");
+    value = value.replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), "");
+    value = value.replaceAll(RegExp(r'<[^>]+>'), "");
+    value = value.replaceAll(RegExp(r'\n{3,}'), "\n\n");
+    return value.trim();
+  }
+
+  String _formatAlternativeNames(String raw) {
+    final value = _decodeHtmlEntities(raw).trim();
+    if (value.isEmpty) return value;
+    final parts = value
+        .split("|")
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+    return parts.isEmpty ? value : parts.join("\n");
+  }
 
   String _encodeTagIds(List<String> tagIds) {
     final ids = tagIds
@@ -428,11 +705,12 @@ class OmegaScans extends MProvider {
 
   String _extractImageUrl(dynamic raw) {
     if (raw is String) return raw.trim();
-    if (raw is Map<String, dynamic>) {
+    final map = _asMap(raw);
+    if (map.isNotEmpty) {
       return _firstNotEmpty([
-        _asString(raw["url"]),
-        _asString(raw["image"]),
-        _asString(raw["src"]),
+        _asString(map["url"]),
+        _asString(map["image"]),
+        _asString(map["src"]),
       ]);
     }
     return "";
