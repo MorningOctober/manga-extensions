@@ -1,7 +1,7 @@
 import '../../../../../model/source.dart';
 
 Source get omegaScansSource => _omegaScansSource;
-const _omegaScansVersion = "1.0.14";
+const _omegaScansVersion = "1.0.15";
 const _omegaScansSourceCodeUrl =
     "https://raw.githubusercontent.com/MorningOctober/manga-extensions/$branchName/dart/manga/src/en/OmegaScans/omegascans.dart";
 const _omegaScansIconUrl =
