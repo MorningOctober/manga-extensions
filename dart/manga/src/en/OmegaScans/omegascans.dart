@@ -61,9 +61,9 @@ class OmegaScans extends MProvider {
       headers: _headers,
     );
 
-    final jsonResponse = json.decode(res.body) as Map<String, dynamic>;
-    final data = (jsonResponse["data"] as List<dynamic>? ?? []);
-    final meta = (jsonResponse["meta"] as Map<String, dynamic>? ?? {});
+    final jsonResponse = _asMap(_decodeJsonSafe(res.body));
+    final data = _asList(jsonResponse["data"]);
+    final meta = _asMap(jsonResponse["meta"]);
 
     final currentPage =
         int.tryParse("${meta["current_page"] ?? normalizedPage}") ??
@@ -76,7 +76,7 @@ class OmegaScans extends MProvider {
   }
 
   MManga _mapSeriesToManga(dynamic raw) {
-    final item = raw is Map<String, dynamic> ? raw : <String, dynamic>{};
+    final item = _asMap(raw);
     final slug = _asString(item["series_slug"]);
     final manga = MManga();
 
@@ -140,9 +140,9 @@ class OmegaScans extends MProvider {
           status = _asString(filter.values[filter.state].value);
         }
       } else if (filter.type == "TagsFilter") {
-        final values = filter.state as List<dynamic>? ?? [];
+        final values = _asList(filter.state);
         for (final item in values) {
-          if (item.state == true) {
+          if (item is CheckBoxFilter && item.state == true) {
             final id = _asString(item.value);
             if (id.isNotEmpty) tagIds.add(id);
           }
@@ -163,9 +163,10 @@ class OmegaScans extends MProvider {
   @override
   Future<MManga> getDetail(String url) async {
     final slug = _extractSeriesSlug(url);
+    if (slug.isEmpty) return MManga();
     final res = await client.get(_apiUri("/series/$slug"), headers: _headers);
 
-    final data = json.decode(res.body) as Map<String, dynamic>;
+    final data = _asMap(_decodeJsonSafe(res.body));
     final manga = MManga();
     final statusList = [
       {
@@ -206,15 +207,16 @@ class OmegaScans extends MProvider {
   }
 
   Future<List<MChapter>> _getChapters(String seriesSlug) async {
+    if (seriesSlug.isEmpty) return [];
     final res = await client.get(
       _apiUri("/chapter/all/$seriesSlug"),
       headers: _headers,
     );
-    final data = json.decode(res.body) as List<dynamic>;
+    final data = _asList(_decodeJsonSafe(res.body));
     final chapters = <MChapter>[];
 
     for (final raw in data) {
-      final chapter = raw is Map<String, dynamic> ? raw : <String, dynamic>{};
+      final chapter = _asMap(raw);
       final chapterSlug = _asString(chapter["chapter_slug"]);
       if (chapterSlug.isEmpty) continue;
 
@@ -247,17 +249,18 @@ class OmegaScans extends MProvider {
   @override
   Future<List<String>> getPageList(String url) async {
     final ref = _extractChapterRef(url);
+    if (ref.seriesSlug.isEmpty || ref.chapterSlug.isEmpty) return [];
     final res = await client.get(
       _apiUri("/chapter/${ref.seriesSlug}/${ref.chapterSlug}"),
       headers: _headers,
     );
-    final data = json.decode(res.body) as Map<String, dynamic>;
+    final data = _asMap(_decodeJsonSafe(res.body));
 
     if (data["paywall"] == true) return [];
 
-    final chapter = data["chapter"] as Map<String, dynamic>? ?? {};
-    final chapterData = chapter["chapter_data"] as Map<String, dynamic>? ?? {};
-    final images = chapterData["images"] as List<dynamic>? ?? [];
+    final chapter = _asMap(data["chapter"]);
+    final chapterData = _asMap(chapter["chapter_data"]);
+    final images = _asList(chapterData["images"]);
 
     final pages = <String>[];
     for (final image in images) {
@@ -293,14 +296,36 @@ class OmegaScans extends MProvider {
   }
 
   List<String> _extractGenres(dynamic tagsRaw) {
-    final tags = tagsRaw as List<dynamic>? ?? [];
+    final tags = _asList(tagsRaw);
     return tags
         .map((tag) {
-          if (tag is Map<String, dynamic>) return _asString(tag["name"]);
+          if (tag is Map) return _asString(tag["name"]);
           return _asString(tag);
         })
         .where((name) => name.isNotEmpty)
         .toList();
+  }
+
+  dynamic _decodeJsonSafe(String raw) {
+    try {
+      return json.decode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, val) => MapEntry(key.toString(), val));
+    }
+    return <String, dynamic>{};
+  }
+
+  List<dynamic> _asList(dynamic value) {
+    if (value is List<dynamic>) return value;
+    if (value is List) return List<dynamic>.from(value);
+    return <dynamic>[];
   }
 
   String _asString(dynamic value) => value?.toString().trim() ?? "";
