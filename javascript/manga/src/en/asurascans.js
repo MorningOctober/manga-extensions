@@ -282,6 +282,45 @@ class DefaultExtension extends MProvider {
 		return Number.isNaN(ts) ? null : String(ts);
 	}
 
+	_extractAlternativeTitles(series) {
+		const titles = [];
+
+		const fromList = Array.isArray(series?.alt_titles)
+			? series.alt_titles
+			: [];
+		for (const title of fromList) {
+			const value = String(title || "").trim();
+			if (value) titles.push(value);
+		}
+
+		const fromString = String(series?.alternative_titles || "").trim();
+		if (fromString) {
+			const splitValues = fromString
+				.split(/\s*[•|\n]\s*/)
+				.map((title) => title.trim())
+				.filter(Boolean);
+			if (splitValues.length > 0) {
+				titles.push(...splitValues);
+			} else {
+				titles.push(fromString);
+			}
+		}
+
+		return [...new Set(titles)];
+	}
+
+	_buildDetailDescription(baseDescription, alternativeTitles) {
+		const cleanBase = String(baseDescription || "").trim();
+		if (!Array.isArray(alternativeTitles) || alternativeTitles.length === 0) {
+			return cleanBase;
+		}
+
+		const altBlock = `Alternative Titles:\n${alternativeTitles.join("\n")}`;
+		if (!cleanBase) return altBlock;
+
+		return `${cleanBase}\n-----\n${altBlock}`;
+	}
+
 	async getPopular(page) {
 		const offset = (page - 1) * 20;
 		const res = await this._apiGet(
@@ -462,7 +501,14 @@ class DefaultExtension extends MProvider {
 		const seriesJson = this._parseJsonBody(seriesRes.body, "getDetail-series");
 		const s = seriesJson.series || seriesJson;
 
-		const description = (s.description || "").replace(/<[^>]+>/g, "").trim(); // HTML strip
+		const descriptionBase = (s.description || "")
+			.replace(/<[^>]+>/g, "")
+			.trim(); // HTML strip
+		const alternativeTitles = this._extractAlternativeTitles(s);
+		const description = this._buildDetailDescription(
+			descriptionBase,
+			alternativeTitles,
+		);
 		const imageUrl = s.cover || s.cover_url || "";
 		const seriesPublicUrl = this._normalizeSitePath(
 			s.public_url || `/comics/${slug}`,

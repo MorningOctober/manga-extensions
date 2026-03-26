@@ -221,14 +221,9 @@ class Atsumaru extends MProvider {
     final name = (mangaData["englishTitle"] ?? mangaData["title"] ?? "No Title")
         .toString();
     final imageUrl = (mangaData["poster"]?["image"] ?? "").toString();
-    final synopsis = (mangaData["synopsis"] ?? "").toString();
-    final otherNames = ((mangaData["otherNames"] ?? []) as List<dynamic>)
-        .map((name) => name.toString())
-        .where((name) => name.isNotEmpty)
-        .toList();
-    final description = otherNames.isNotEmpty
-        ? "$synopsis\n\nAlternative Titles:\n${otherNames.join("\n")}"
-        : synopsis;
+    final synopsis = (mangaData["synopsis"] ?? "").toString().trim();
+    final alternativeTitles = _extractAlternativeTitles(mangaData);
+    final description = _buildDescription(synopsis, alternativeTitles);
     final status = (mangaData["status"] ?? "Unknown").toString();
     final authors = ((mangaData["authors"] ?? []) as List<dynamic>)
         .map((author) => (author["name"] ?? "").toString())
@@ -262,6 +257,64 @@ class Atsumaru extends MProvider {
     manga.status = parseStatus(status, statusList);
 
     return manga;
+  }
+
+  String _buildDescription(String synopsis, List<String> alternativeTitles) {
+    final base = synopsis.trim();
+    if (alternativeTitles.isEmpty) return base;
+
+    final altBlock = "Alternative Titles:\n${alternativeTitles.join("\n")}";
+    if (base.isEmpty) return altBlock;
+    return "$base\n-----\n$altBlock";
+  }
+
+  List<String> _extractAlternativeTitles(Map<String, dynamic> mangaData) {
+    final titles = <String>[];
+
+    void addTitle(dynamic raw) {
+      final value = raw?.toString().trim() ?? "";
+      if (value.isNotEmpty) titles.add(value);
+    }
+
+    void addFromList(dynamic raw) {
+      if (raw is! List) return;
+      for (final item in raw) {
+        addTitle(item);
+      }
+    }
+
+    void addFromString(dynamic raw) {
+      if (raw is! String) return;
+      final value = raw.trim();
+      if (value.isEmpty) return;
+      final splitValues = value
+          .split(RegExp(r'\s*[•|\n]\s*'))
+          .map((title) => title.trim())
+          .where((title) => title.isNotEmpty)
+          .toList();
+      if (splitValues.isNotEmpty) {
+        titles.addAll(splitValues);
+      } else {
+        titles.add(value);
+      }
+    }
+
+    addFromList(mangaData["otherNames"]);
+    addFromList(mangaData["alt_titles"]);
+    addFromList(mangaData["alternative_titles"]);
+    addFromList(mangaData["alternativeTitles"]);
+
+    addFromString(mangaData["alternative_titles"]);
+    addFromString(mangaData["alternativeTitles"]);
+    addFromString(mangaData["other_names"]);
+    addFromString(mangaData["otherNames"]);
+
+    final seen = <String>{};
+    final unique = <String>[];
+    for (final title in titles) {
+      if (seen.add(title)) unique.add(title);
+    }
+    return unique;
   }
 
   Future<List<MChapter>> getChapters(

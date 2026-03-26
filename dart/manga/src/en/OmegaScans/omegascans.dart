@@ -400,8 +400,9 @@ class OmegaScans extends MProvider {
     final seen = <String>{};
 
     for (var i = 0; i < slugMatches.length; i++) {
-      final chapterSlug = _decodeHtmlEntities(slugMatches[i].group(1) ?? "")
-          .trim();
+      final chapterSlug = _decodeHtmlEntities(
+        slugMatches[i].group(1) ?? "",
+      ).trim();
       if (chapterSlug.isEmpty || seen.contains(chapterSlug)) continue;
       seen.add(chapterSlug);
 
@@ -482,12 +483,12 @@ class OmegaScans extends MProvider {
 
   String _buildDescription(Map<String, dynamic> data) {
     final description = _cleanDescriptionText(_asString(data["description"]));
-    final alternativeNames = _formatAlternativeNames(
-      _asString(data["alternative_names"]),
-    );
-    if (alternativeNames.isEmpty) return description;
-    if (description.isEmpty) return "Alternative names:\n$alternativeNames";
-    return "$description\n\nAlternative names:\n$alternativeNames";
+    final alternativeTitles = _extractAlternativeTitles(data);
+    if (alternativeTitles.isEmpty) return description;
+
+    final altBlock = "Alternative Titles:\n${alternativeTitles.join("\n")}";
+    if (description.isEmpty) return altBlock;
+    return "$description\n-----\n$altBlock";
   }
 
   List<String> _extractGenres(dynamic tagsRaw) {
@@ -582,11 +583,15 @@ class OmegaScans extends MProvider {
 
     value = value.replaceAllMapped(RegExp(r'&#(\d+);'), (match) {
       final codePoint = int.tryParse(match.group(1)!);
-      return codePoint == null ? match.group(0)! : String.fromCharCode(codePoint);
+      return codePoint == null
+          ? match.group(0)!
+          : String.fromCharCode(codePoint);
     });
     value = value.replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (match) {
       final codePoint = int.tryParse(match.group(1)!, radix: 16);
-      return codePoint == null ? match.group(0)! : String.fromCharCode(codePoint);
+      return codePoint == null
+          ? match.group(0)!
+          : String.fromCharCode(codePoint);
     });
 
     return value;
@@ -604,15 +609,52 @@ class OmegaScans extends MProvider {
     return value.trim();
   }
 
-  String _formatAlternativeNames(String raw) {
-    final value = _decodeHtmlEntities(raw).trim();
-    if (value.isEmpty) return value;
-    final parts = value
-        .split("|")
-        .map((part) => part.trim())
-        .where((part) => part.isNotEmpty)
-        .toList();
-    return parts.isEmpty ? value : parts.join("\n");
+  List<String> _extractAlternativeTitles(Map<String, dynamic> data) {
+    final titles = <String>[];
+
+    void addTitle(dynamic raw) {
+      final value = _decodeHtmlEntities(_asString(raw)).trim();
+      if (value.isNotEmpty) titles.add(value);
+    }
+
+    void addFromList(dynamic raw) {
+      final values = _asList(raw);
+      for (final item in values) {
+        addTitle(item);
+      }
+    }
+
+    void addFromString(dynamic raw) {
+      if (raw is! String) return;
+      final value = _decodeHtmlEntities(raw).trim();
+      if (value.isEmpty) return;
+      final splitValues = value
+          .split(RegExp(r'\s*[•|\n]\s*'))
+          .map((title) => title.trim())
+          .where((title) => title.isNotEmpty)
+          .toList();
+      if (splitValues.isNotEmpty) {
+        titles.addAll(splitValues);
+      } else {
+        titles.add(value);
+      }
+    }
+
+    addFromList(data["alt_titles"]);
+    addFromList(data["alternative_titles"]);
+    addFromList(data["alternative_names"]);
+    addFromList(data["alternativeNames"]);
+
+    addFromString(data["alternative_titles"]);
+    addFromString(data["alternative_names"]);
+    addFromString(data["alternativeNames"]);
+
+    final seen = <String>{};
+    final unique = <String>[];
+    for (final title in titles) {
+      if (seen.add(title)) unique.add(title);
+    }
+    return unique;
   }
 
   String _encodeTagIds(List<String> tagIds) {
@@ -751,10 +793,8 @@ class OmegaScans extends MProvider {
         "Tags",
         _availableTags
             .map(
-              (tag) => CheckBoxFilter(
-                _asString(tag["name"]),
-                _asString(tag["id"]),
-              ),
+              (tag) =>
+                  CheckBoxFilter(_asString(tag["name"]), _asString(tag["id"])),
             )
             .toList(),
       ),
