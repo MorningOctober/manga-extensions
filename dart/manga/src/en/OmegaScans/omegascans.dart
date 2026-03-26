@@ -9,11 +9,11 @@ class OmegaScans extends MProvider {
 
   static const _defaultPerPage = "20";
   static const _availableTags = [
-    _TagOption(name: "Drama", id: "2"),
-    _TagOption(name: "Harem", id: "8"),
-    _TagOption(name: "Fantasy", id: "3"),
-    _TagOption(name: "Romance", id: "1"),
-    _TagOption(name: "MILF", id: "16"),
+    {"name": "Drama", "id": "2"},
+    {"name": "Harem", "id": "8"},
+    {"name": "Fantasy", "id": "3"},
+    {"name": "Romance", "id": "1"},
+    {"name": "MILF", "id": "16"},
   ];
 
   @override
@@ -463,7 +463,14 @@ class OmegaScans extends MProvider {
       GroupFilter(
         "TagsFilter",
         "Tags",
-        _availableTags.map((tag) => CheckBoxFilter(tag.name, tag.id)).toList(),
+        _availableTags
+            .map(
+              (tag) => CheckBoxFilter(
+                _asString(tag["name"]),
+                _asString(tag["id"]),
+              ),
+            )
+            .toList(),
       ),
     ];
   }
@@ -477,13 +484,6 @@ class _ChapterRef {
   final String chapterSlug;
 
   const _ChapterRef({required this.seriesSlug, required this.chapterSlug});
-}
-
-class _TagOption {
-  final String name;
-  final String id;
-
-  const _TagOption({required this.name, required this.id});
 }
 
 // ignore: main_first_positional_parameter_type
