@@ -235,10 +235,16 @@ class OmegaScans extends MProvider {
       _asString(data["status"]).toLowerCase(),
       statusList,
     );
-    manga.chapters = await _getChapters(slug, fallbackTitle: title);
-    print(
-      "OmegaScans/getDetail slug=$slug chapters=${manga.chapters?.length ?? 0}",
-    );
+    final chapters = await _getChapters(slug, fallbackTitle: title);
+    manga.chapters = chapters;
+    if (chapters.isNotEmpty) {
+      final first = chapters.first;
+      print(
+        "OmegaScans/getDetail slug=$slug chapters=${chapters.length} firstName=${first.name} firstUrl=${first.url}",
+      );
+    } else {
+      print("OmegaScans/getDetail slug=$slug chapters=0");
+    }
 
     return manga;
   }
@@ -351,7 +357,8 @@ class OmegaScans extends MProvider {
       item.name = chapterTitle.isEmpty
           ? chapterName
           : "$chapterName - $chapterTitle";
-      item.url = "/series/$seriesSlug/$chapterSlug";
+      item.url =
+          "${source.baseUrl ?? "https://omegascans.org"}/series/$seriesSlug/$chapterSlug";
       item.dateUpload = _parseDateUpload(chapter["created_at"]);
       item.thumbnailUrl = _toAbsoluteUrl(
         _asString(chapter["chapter_thumbnail"]),
@@ -419,7 +426,8 @@ class OmegaScans extends MProvider {
 
       final item = MChapter();
       item.name = displayName;
-      item.url = "/series/$seriesSlug/$chapterSlug";
+      item.url =
+          "${source.baseUrl ?? "https://omegascans.org"}/series/$seriesSlug/$chapterSlug";
       item.dateUpload = _parseDateUpload(createdAt);
       item.thumbnailUrl = _toAbsoluteUrl(thumbnail);
       if (price > 0) {
