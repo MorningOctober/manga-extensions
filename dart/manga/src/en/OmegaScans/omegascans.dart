@@ -447,7 +447,7 @@ class OmegaScans extends MProvider {
   Future<List<String>> getPageList(String url) async {
     final ref = _extractChapterRef(url);
     if (ref.seriesSlug.isEmpty || ref.chapterSlug.isEmpty) {
-      return _fallbackPageList();
+      return _ensureReaderSafePageCount(_fallbackPageList());
     }
 
     try {
@@ -456,7 +456,9 @@ class OmegaScans extends MProvider {
         headers: _headers,
       );
       final data = _asMap(_decodeJsonSafe(res.body));
-      if (data["paywall"] == true) return _fallbackPageList();
+      if (data["paywall"] == true) {
+        return _ensureReaderSafePageCount(_fallbackPageList());
+      }
 
       final chapter = _asMap(data["chapter"]);
       final chapterData = _asMap(chapter["chapter_data"]);
@@ -471,9 +473,10 @@ class OmegaScans extends MProvider {
         pages.add(normalizedUrl);
       }
 
-      return pages.isNotEmpty ? pages : _fallbackPageList();
+      final resolvedPages = pages.isNotEmpty ? pages : _fallbackPageList();
+      return _ensureReaderSafePageCount(resolvedPages);
     } catch (_) {
-      return _fallbackPageList();
+      return _ensureReaderSafePageCount(_fallbackPageList());
     }
   }
 
@@ -833,6 +836,15 @@ class OmegaScans extends MProvider {
     final fallback = _toAbsoluteUrl(_fallbackPageImageUrl);
     if (fallback.isEmpty) return [_fallbackPageImageUrl];
     return [fallback];
+  }
+
+  List<String> _ensureReaderSafePageCount(List<String> pages) {
+    final normalized = pages.where((page) => page.trim().isNotEmpty).toList();
+    if (normalized.isEmpty) return _fallbackPageList();
+    if (normalized.length == 1) {
+      return [normalized.first, normalized.first];
+    }
+    return normalized;
   }
 
   @override
