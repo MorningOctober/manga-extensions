@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.genzupdates.png",
 		"typeSource": "single",
 		"itemType": 0,
-		"version": "0.0.3",
+		"version": "0.0.7",
 		"dateFormat": "MMM d, yyyy",
 		"dateFormatLocale": "en",
 		"hasCloudflare": true,
@@ -73,8 +73,58 @@ class DefaultExtension extends MProvider {
 			.trim();
 	}
 
+	_decodeHtmlEntities(text) {
+		return String(text || "")
+			.replace(/&amp;/gi, "&")
+			.replace(/&#38;/g, "&")
+			.trim();
+	}
+
 	_stripHtml(html) {
 		return this._cleanText(String(html || "").replace(/<[^>]+>/g, " "));
+	}
+
+	_extractUrlFromStyle(styleValue) {
+		const style = String(styleValue || "");
+		if (!style) return "";
+		const match = style.match(/url\(([^)]+)\)/i);
+		if (!match?.[1]) return "";
+		return this._decodeHtmlEntities(
+			this._cleanText(match[1]).replace(/^['"]|['"]$/g, "")
+		);
+	}
+
+	_buildSeriesCoverMap(html) {
+		const map = new Map();
+		const source = String(html || "");
+		const document = new Document(source);
+
+		for (const link of document.select('a[href^="/series/"]')) {
+			const path = this._normalizeSeriesPath(
+				this._cleanText(link.attr("href"))
+			);
+			if (!path || map.has(path)) continue;
+			const image =
+				this._extractUrlFromStyle(link.attr("style")) ||
+				this._extractUrlFromStyle(
+					link.selectFirst('[style*="background-image"]')?.attr("style")
+				);
+			if (!path || !image || map.has(path)) continue;
+			map.set(path, image);
+		}
+
+		if (map.size > 0) return map;
+
+		for (const match of source.matchAll(
+			/<a[^>]+href=(["'])(\/series\/[^"'?#]+\/?)\1[^>]*style=(["'])([\s\S]*?)\3[^>]*>/gi
+		)) {
+			const path = this._normalizeSeriesPath(match[2]);
+			const image = this._extractUrlFromStyle(match[4]);
+			if (!path || !image || map.has(path)) continue;
+			map.set(path, image);
+		}
+
+		return map;
 	}
 
 	_throwIfChallenge(html, context) {
@@ -124,6 +174,35 @@ class DefaultExtension extends MProvider {
 		return String(timestamp);
 	}
 
+	_parseRelativeDate(dateText) {
+		const value = this._cleanText(dateText).toLowerCase();
+		if (!value) return null;
+		const now = Date.now();
+		if (value === "today" || value === "just now") return String(now);
+		if (value === "yesterday") return String(now - 24 * 60 * 60 * 1000);
+
+		const match = value.match(
+			/(\d+)\s*(second|minute|hour|day|week|month|year)s?\s*ago/
+		);
+		if (!match) return null;
+		const amount = Number(match[1]);
+		if (!Number.isFinite(amount) || amount <= 0) return null;
+
+		const unitToMs = {
+			second: 1000,
+			minute: 60 * 1000,
+			hour: 60 * 60 * 1000,
+			day: 24 * 60 * 60 * 1000,
+			week: 7 * 24 * 60 * 60 * 1000,
+			month: 30 * 24 * 60 * 60 * 1000,
+			year: 365 * 24 * 60 * 60 * 1000
+		};
+		const unit = match[2];
+		const unitMs = unitToMs[unit];
+		if (!unitMs) return null;
+		return String(now - amount * unitMs);
+	}
+
 	_toStatus(statusText) {
 		switch (String(statusText || "").toLowerCase()) {
 			case "ongoing":
@@ -153,23 +232,18 @@ class DefaultExtension extends MProvider {
 		let response = await client.get(url, makeHeaders(url));
 
 		if (this._isCloudflareBlockedResponse(response)) {
-			// Warmup request can trigger Mangayomi's internal CF resolver and
-			// persist a fresh cf_clearance + matching WebView UA for this host.
-			try {
-				await client.get(`${this.siteBase}/`, makeHeaders(`${this.siteBase}/`));
-			} catch (_err) {}
-			response = await client.get(url, makeHeaders(url));
-		}
-
-		if (this._isCloudflareBlockedResponse(response)) {
-			// Some sessions only become valid after visiting listing routes.
-			try {
-				await client.get(
-					`${this.siteBase}/series/`,
-					makeHeaders(`${this.siteBase}/series/`)
-				);
-			} catch (_err) {}
-			response = await client.get(url, makeHeaders(url));
+			// Trigger Cloudflare/session warmups on multiple site routes.
+			for (const warmupUrl of [
+				`${this.siteBase}/`,
+				`${this.siteBase}/series/`,
+				`${this.siteBase}/latest/`
+			]) {
+				try {
+					await client.get(warmupUrl, makeHeaders(warmupUrl));
+				} catch (_err) {}
+				response = await client.get(url, makeHeaders(url));
+				if (!this._isCloudflareBlockedResponse(response)) break;
+			}
 		}
 
 		if (this._isCloudflareBlockedResponse(response)) {
@@ -185,6 +259,7 @@ class DefaultExtension extends MProvider {
 		const document = new Document(html);
 		const list = [];
 		const seen = new Set();
+		const coverBySeries = this._buildSeriesCoverMap(html);
 
 		for (const link of document.select('a[href^="/series/"]')) {
 			const hrefRaw = this._cleanText(link.attr("href"));
@@ -202,11 +277,16 @@ class DefaultExtension extends MProvider {
 				this._cleanText(img ? img.getSrc : "") ||
 				this._cleanText(img ? img.attr("src") : "") ||
 				this._cleanText(img ? img.getDataSrc : "") ||
-				this._cleanText(img ? img.attr("data-src") : "");
+				this._cleanText(img ? img.attr("data-src") : "") ||
+				this._extractUrlFromStyle(link.attr("style")) ||
+				this._extractUrlFromStyle(
+					link.selectFirst('[style*="background-image"]')?.attr("style")
+				) ||
+				this._cleanText(coverBySeries.get(href) || "");
 
 			list.push({
 				name: title,
-				imageUrl: this._absoluteUrl(imageRaw),
+				imageUrl: this._absoluteUrl(this._decodeHtmlEntities(imageRaw)),
 				link: href
 			});
 			seen.add(href);
@@ -220,7 +300,13 @@ class DefaultExtension extends MProvider {
 			const href = this._normalizeSeriesPath(match[1]);
 			const name = this._cleanText(match[2]);
 			if (!href || !name || seen.has(href)) continue;
-			list.push({ name, imageUrl: "", link: href });
+			list.push({
+				name,
+				imageUrl: this._absoluteUrl(
+					this._cleanText(coverBySeries.get(href) || "")
+				),
+				link: href
+			});
 			seen.add(href);
 		}
 
@@ -318,14 +404,22 @@ class DefaultExtension extends MProvider {
 
 	async search(query, page, filters) {
 		const safePage = Number(page) > 0 ? Number(page) : 1;
-		const params = new URLSearchParams();
-		if (query) params.set("q", String(query));
-		params.set("page", String(safePage));
+		const params = [];
+		const pushParam = (key, value) => {
+			if (value == null) return;
+			const normalized = this._cleanText(String(value));
+			if (!normalized) return;
+			params.push(
+				`${encodeURIComponent(key)}=${encodeURIComponent(normalized)}`
+			);
+		};
+		pushParam("q", query);
+		pushParam("page", safePage);
 
 		const type = this._getFilterValue(filters, 0, "");
 		const status = this._getFilterValue(filters, 1, "");
-		if (type) params.set("type", type);
-		if (status) params.set("status", status);
+		pushParam("type", type);
+		pushParam("status", status);
 
 		const genreFilter = Array.isArray(filters) ? filters[2] : null;
 		if (genreFilter && Array.isArray(genreFilter.state)) {
@@ -334,11 +428,11 @@ class DefaultExtension extends MProvider {
 				.map((checkbox) => String(checkbox.value || ""))
 				.filter(Boolean);
 			if (selected.length > 0) {
-				params.set("genre", selected[0]);
+				pushParam("genre", selected[0]);
 			}
 		}
 
-		const res = await this._request(`/series/?${params.toString()}`);
+		const res = await this._request(`/series/?${params.join("&")}`);
 		this._throwIfChallenge(res.body, `search page ${safePage}`);
 		const list = this._collectSeriesFromHtml(res.body);
 		return {
@@ -357,14 +451,21 @@ class DefaultExtension extends MProvider {
 	}
 
 	_extractCover(html) {
-		const wsrv = String(html).match(
-			/https:\/\/wsrv\.nl\/\?url=cdn\.meowing\.org\/uploads\/[A-Za-z0-9._-]+&w=(?:640|600|500|400|300|250|150)/i
+		const ogImage = String(html).match(
+			/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
 		);
-		if (wsrv?.[0]) return wsrv[0];
+		if (ogImage?.[1]) {
+			return this._absoluteUrl(this._decodeHtmlEntities(ogImage[1]));
+		}
+
+		const wsrv = String(html).match(
+			/https:\/\/wsrv\.nl\/\?url=cdn\.meowing\.org\/uploads\/[A-Za-z0-9._-]+(?:(?:&|&amp;)w=\d+)?/i
+		);
+		if (wsrv?.[0]) return this._absoluteUrl(this._decodeHtmlEntities(wsrv[0]));
 		const cdn = String(html).match(
 			/https:\/\/cdn\.meowing\.org\/uploads\/[A-Za-z0-9._-]+/i
 		);
-		if (cdn?.[0]) return cdn[0];
+		if (cdn?.[0]) return this._absoluteUrl(cdn[0]);
 		return "";
 	}
 
@@ -422,13 +523,24 @@ class DefaultExtension extends MProvider {
 			const chapterPath = this._normalizeChapterPath(chapter.attr("href"));
 			if (!chapterPath || seenChapters.has(chapterPath)) continue;
 
-			const rawText = this._cleanText(chapter.text);
+			const chapterTitle = this._cleanText(chapter.attr("title"));
+			const chapterAlt = this._cleanText(chapter.attr("alt"));
+			const chapterNumber = this._cleanText(chapter.attr("c"));
+			const chapterDate = this._cleanText(chapter.attr("d"));
+			const rawText = this._cleanText(
+				`${chapterTitle} ${chapterAlt} ${chapterDate} ${chapter.text}`
+			);
 			if (!rawText && !chapterPath) continue;
 
 			const chapterNameMatch = rawText.match(
 				/Chapter\s*\d+(?:\.\d+)?(?:\s*[-:–]\s*[^\n]+)?/i
 			);
-			let chapterName = this._cleanText(chapterNameMatch?.[0] || "");
+			let chapterName = this._cleanText(
+				chapterNameMatch?.[0] || chapterTitle || chapterAlt
+			);
+			if (!chapterName && /^\d+(?:\.\d+)?$/.test(chapterNumber)) {
+				chapterName = `Chapter ${chapterNumber}`;
+			}
 			if (!chapterName) {
 				const chapterId = chapterPath
 					.replace(/^\/chapter\//, "")
@@ -443,11 +555,15 @@ class DefaultExtension extends MProvider {
 			const dateMatch = rawText.match(
 				/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b/i
 			);
+			const parsedDate =
+				this._parseDate(dateMatch?.[0] || "") ||
+				this._parseRelativeDate(chapterDate) ||
+				this._parseRelativeDate(rawText);
 
 			chapters.push({
 				name: chapterName,
 				url: chapterPath,
-				dateUpload: this._parseDate(dateMatch?.[0] || "")
+				dateUpload: parsedDate
 			});
 			seenChapters.add(chapterPath);
 		}
@@ -483,11 +599,15 @@ class DefaultExtension extends MProvider {
 		const seen = new Set();
 		const document = new Document(html);
 		for (const img of document.select("img")) {
-			const src =
+			let src =
 				this._cleanText(img ? img.getSrc : "") ||
 				this._cleanText(img ? img.attr("src") : "") ||
 				this._cleanText(img ? img.getDataSrc : "") ||
 				this._cleanText(img ? img.attr("data-src") : "");
+			const uid = this._cleanText(img ? img.attr("uid") : "");
+			if ((!src || /placeholder\.svg/i.test(src)) && uid) {
+				src = `https://cdn.meowing.org/uploads/${uid}`;
+			}
 			if (!/cdn\.meowing\.org\/uploads\//i.test(src)) continue;
 			const absolute = this._absoluteUrl(src);
 			if (!absolute || seen.has(absolute)) continue;
@@ -502,6 +622,16 @@ class DefaultExtension extends MProvider {
 		)) {
 			const page = this._cleanText(match[0]);
 			if (!page || seen.has(page)) continue;
+			seen.add(page);
+			pages.push(page);
+		}
+
+		for (const uidMatch of String(html).matchAll(
+			/\buid="([A-Za-z0-9._-]+)"/gi
+		)) {
+			const page = `https://cdn.meowing.org/uploads/${this._cleanText(uidMatch[1])}`;
+			if (!/cdn\.meowing\.org\/uploads\//i.test(page) || seen.has(page))
+				continue;
 			seen.add(page);
 			pages.push(page);
 		}
