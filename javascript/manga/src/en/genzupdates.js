@@ -5,10 +5,11 @@ const mangayomiSources = [
 		"lang": "en",
 		"baseUrl": "https://genzupdates.com",
 		"apiUrl": "",
-		"iconUrl": "https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.genzupdates.png",
+		"iconUrl":
+			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.genzupdates.png",
 		"typeSource": "single",
 		"itemType": 0,
-		"version": "0.0.2",
+		"version": "0.0.3",
 		"dateFormat": "MMM d, yyyy",
 		"dateFormatLocale": "en",
 		"hasCloudflare": true,
@@ -19,7 +20,10 @@ const mangayomiSources = [
 class DefaultExtension extends MProvider {
 	constructor(...args) {
 		super(...args);
-		this._httpClient = new Client({ useDartHttpClient: true });
+		// Keep default client stack so Mangayomi's Cloudflare resolver and
+		// persisted WebView cookie/UA handling can be applied without forcing
+		// the Dart-only HTTP profile.
+		this._httpClient = new Client();
 	}
 
 	get siteBase() {
@@ -33,12 +37,15 @@ class DefaultExtension extends MProvider {
 		return {
 			Accept:
 				"text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+			"Accept-Language": "en-US,en;q=0.9",
+			"Cache-Control": "no-cache",
+			Pragma: "no-cache",
 			Referer: `${this.siteBase}/`
 		};
 	}
 
 	_client() {
-		return this._httpClient || new Client({ useDartHttpClient: true });
+		return this._httpClient || new Client();
 	}
 
 	_isCloudflareBlockedResponse(response) {
@@ -138,21 +145,36 @@ class DefaultExtension extends MProvider {
 		const url = /^https?:\/\//i.test(path)
 			? path
 			: `${this.siteBase}${path.startsWith("/") ? "" : "/"}${path}`;
-		const baseHeaders = this.getHeaders(url);
-		let response = await this._client().get(url, baseHeaders);
+		const makeHeaders = (targetUrl, extra = {}) => ({
+			...this.getHeaders(targetUrl),
+			...extra
+		});
+		const client = this._client();
+		let response = await client.get(url, makeHeaders(url));
 
 		if (this._isCloudflareBlockedResponse(response)) {
-			const retryHeaders = {
-				...baseHeaders,
-				"Cache-Control": "no-cache",
-				Pragma: "no-cache"
-			};
-			response = await this._client().get(url, retryHeaders);
+			// Warmup request can trigger Mangayomi's internal CF resolver and
+			// persist a fresh cf_clearance + matching WebView UA for this host.
+			try {
+				await client.get(`${this.siteBase}/`, makeHeaders(`${this.siteBase}/`));
+			} catch (_err) {}
+			response = await client.get(url, makeHeaders(url));
+		}
+
+		if (this._isCloudflareBlockedResponse(response)) {
+			// Some sessions only become valid after visiting listing routes.
+			try {
+				await client.get(
+					`${this.siteBase}/series/`,
+					makeHeaders(`${this.siteBase}/series/`)
+				);
+			} catch (_err) {}
+			response = await client.get(url, makeHeaders(url));
 		}
 
 		if (this._isCloudflareBlockedResponse(response)) {
 			throw new Error(
-				`Cloudflare blocked request: ${url}. Open Genz Updates in WebView, complete the challenge, then retry.`
+				`Cloudflare blocked request: ${url}. Open Genz Updates in WebView, refresh ${this.siteBase}/series/, then retry.`
 			);
 		}
 
