@@ -32,7 +32,14 @@
 	],
 	"javascript": {
 		"formatter": {
-			"quoteStyle": "double"
+			"quoteStyle": "double",
+			"quoteProperties": "preserve",
+			"trailingCommas": "none"
+		}
+	},
+	"json": {
+		"formatter": {
+			"trailingCommas": "none"
 		}
 	},
 	"assist": {

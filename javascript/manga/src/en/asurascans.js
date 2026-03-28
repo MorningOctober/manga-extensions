@@ -1,19 +1,19 @@
 const mangayomiSources = [
 	{
-		id: 524070078,
-		name: "Asura Scans",
-		lang: "en",
-		baseUrl: "https://asurascans.com",
-		apiUrl: "https://api.asurascans.com",
-		iconUrl:
+		"id": 524070078,
+		"name": "Asura Scans",
+		"lang": "en",
+		"baseUrl": "https://asurascans.com",
+		"apiUrl": "https://api.asurascans.com",
+		"iconUrl":
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.asurascans.png",
-		typeSource: "single",
-		itemType: 0,
-		version: "0.2.15",
-		dateFormat: "",
-		dateFormatLocale: "",
-		pkgPath: "manga/src/en/asurascans.js",
-	},
+		"typeSource": "single",
+		"itemType": 0,
+		"version": "0.2.16",
+		"dateFormat": "",
+		"dateFormatLocale": "",
+		"pkgPath": "manga/src/en/asurascans.js"
+	}
 ];
 
 class DefaultExtension extends MProvider {
@@ -81,11 +81,11 @@ class DefaultExtension extends MProvider {
 	_cacheAuthTokensFromResponse(response) {
 		const requestCookieHeader = this._getHeaderValue(
 			response?.request?.headers,
-			"cookie",
+			"cookie"
 		);
 		const responseSetCookieHeader = this._getHeaderValue(
 			response?.headers,
-			"set-cookie",
+			"set-cookie"
 		);
 		const cookieHeader = requestCookieHeader || responseSetCookieHeader;
 		if (!cookieHeader) return;
@@ -134,7 +134,7 @@ class DefaultExtension extends MProvider {
 	async _apiGet(url, useAuth = false) {
 		const res = await new Client({ useDartHttpClient: true }).get(
 			url,
-			this._buildApiHeaders(useAuth),
+			this._buildApiHeaders(useAuth)
 		);
 		this._cacheAuthTokensFromResponse(res);
 		return res;
@@ -147,9 +147,9 @@ class DefaultExtension extends MProvider {
 				`${this.apiBase}/api/auth/refresh`,
 				{
 					...this.apiHeaders,
-					"Content-Type": "application/json",
+					"Content-Type": "application/json"
 				},
-				{ refresh_token: this._refreshTokenCache },
+				{ refresh_token: this._refreshTokenCache }
 			);
 			this._cacheAuthTokensFromResponse(res);
 			const json = this._parseJsonBody(res.body, "auth-refresh");
@@ -181,13 +181,13 @@ class DefaultExtension extends MProvider {
 
 	get apiBase() {
 		return this._trimTrailingSlash(
-			new SharedPreferences().get("overrideApiUrl") || this.source.apiUrl,
+			new SharedPreferences().get("overrideApiUrl") || this.source.apiUrl
 		);
 	}
 
 	get siteBase() {
 		return this._trimTrailingSlash(
-			new SharedPreferences().get("overrideSiteUrl") || this.source.baseUrl,
+			new SharedPreferences().get("overrideSiteUrl") || this.source.baseUrl
 		);
 	}
 
@@ -239,7 +239,7 @@ class DefaultExtension extends MProvider {
 		) {
 			return {
 				seriesSlug: parts[1].replace(/-f[0-9a-f]{6,8}$/i, ""),
-				chapterSlug: parts[parts.length - 1],
+				chapterSlug: parts[parts.length - 1]
 			};
 		}
 
@@ -254,8 +254,8 @@ class DefaultExtension extends MProvider {
 			imageUrl: item.cover || item.cover_url || "",
 			link: this._normalizeSitePath(
 				item.public_url || (item.slug ? `/comics/${item.slug}` : ""),
-				"/",
-			),
+				"/"
+			)
 		}));
 		return { list, hasNextPage: meta.has_more === true };
 	}
@@ -285,9 +285,7 @@ class DefaultExtension extends MProvider {
 	_extractAlternativeTitles(series) {
 		const titles = [];
 
-		const fromList = Array.isArray(series?.alt_titles)
-			? series.alt_titles
-			: [];
+		const fromList = Array.isArray(series?.alt_titles) ? series.alt_titles : [];
 		for (const title of fromList) {
 			const value = String(title || "").trim();
 			if (value) titles.push(value);
@@ -325,7 +323,7 @@ class DefaultExtension extends MProvider {
 		const offset = (page - 1) * 20;
 		const res = await this._apiGet(
 			`${this.apiBase}/api/series?sort=rating&order=desc&offset=${offset}&limit=20`,
-			true,
+			true
 		);
 		return this._parseMangaList(this._parseJsonBody(res.body, "getPopular"));
 	}
@@ -334,10 +332,10 @@ class DefaultExtension extends MProvider {
 		const offset = (page - 1) * 20;
 		const res = await this._apiGet(
 			`${this.apiBase}/api/series?sort=latest&order=desc&offset=${offset}&limit=20`,
-			true,
+			true
 		);
 		return this._parseMangaList(
-			this._parseJsonBody(res.body, "getLatestUpdates"),
+			this._parseJsonBody(res.body, "getLatestUpdates")
 		);
 	}
 
@@ -387,9 +385,9 @@ class DefaultExtension extends MProvider {
 					{
 						type_name: "SelectOption",
 						name: "Latest Update",
-						value: "latest",
-					},
-				],
+						value: "latest"
+					}
+				]
 			},
 			{
 				type_name: "SelectFilter",
@@ -397,8 +395,8 @@ class DefaultExtension extends MProvider {
 				state: 1,
 				values: [
 					{ type_name: "SelectOption", name: "Ascending", value: "asc" },
-					{ type_name: "SelectOption", name: "Descending", value: "desc" },
-				],
+					{ type_name: "SelectOption", name: "Descending", value: "desc" }
+				]
 			},
 			{
 				type_name: "SelectFilter",
@@ -410,16 +408,16 @@ class DefaultExtension extends MProvider {
 					{
 						type_name: "SelectOption",
 						name: "Completed",
-						value: "completed",
+						value: "completed"
 					},
 					{ type_name: "SelectOption", name: "Hiatus", value: "hiatus" },
 					{
 						type_name: "SelectOption",
 						name: "Seasonal",
-						value: "seasonal",
+						value: "seasonal"
 					},
-					{ type_name: "SelectOption", name: "Dropped", value: "dropped" },
-				],
+					{ type_name: "SelectOption", name: "Dropped", value: "dropped" }
+				]
 			},
 			{
 				type_name: "SelectFilter",
@@ -429,8 +427,8 @@ class DefaultExtension extends MProvider {
 					{ type_name: "SelectOption", name: "All", value: "" },
 					{ type_name: "SelectOption", name: "Manhwa", value: "manhwa" },
 					{ type_name: "SelectOption", name: "Manga", value: "manga" },
-					{ type_name: "SelectOption", name: "Manhua", value: "manhua" },
-				],
+					{ type_name: "SelectOption", name: "Manhua", value: "manhua" }
+				]
 			},
 			{
 				type_name: "GroupFilter",
@@ -451,32 +449,32 @@ class DefaultExtension extends MProvider {
 					{
 						type_name: "CheckBox",
 						name: "Martial Arts",
-						value: "martial-arts",
+						value: "martial-arts"
 					},
 					{ type_name: "CheckBox", name: "Murim", value: "murim" },
 					{ type_name: "CheckBox", name: "Mystery", value: "mystery" },
 					{
 						type_name: "CheckBox",
 						name: "Necromancer",
-						value: "necromancer",
+						value: "necromancer"
 					},
 					{
 						type_name: "CheckBox",
 						name: "Overpowered",
-						value: "overpowered",
+						value: "overpowered"
 					},
 					{ type_name: "CheckBox", name: "Regression", value: "regression" },
 					{
 						type_name: "CheckBox",
 						name: "Reincarnation",
-						value: "reincarnation",
+						value: "reincarnation"
 					},
 					{ type_name: "CheckBox", name: "Revenge", value: "revenge" },
 					{ type_name: "CheckBox", name: "Romance", value: "romance" },
 					{
 						type_name: "CheckBox",
 						name: "School Life",
-						value: "school-life",
+						value: "school-life"
 					},
 					{ type_name: "CheckBox", name: "Sci-fi", value: "sci-fi" },
 					{ type_name: "CheckBox", name: "Shoujo", value: "shoujo" },
@@ -485,9 +483,9 @@ class DefaultExtension extends MProvider {
 					{ type_name: "CheckBox", name: "Tower", value: "tower" },
 					{ type_name: "CheckBox", name: "Tragedy", value: "tragedy" },
 					{ type_name: "CheckBox", name: "Villain", value: "villain" },
-					{ type_name: "CheckBox", name: "Violence", value: "violence" },
-				],
-			},
+					{ type_name: "CheckBox", name: "Violence", value: "violence" }
+				]
+			}
 		];
 	}
 
@@ -496,7 +494,7 @@ class DefaultExtension extends MProvider {
 
 		const seriesRes = await this._apiGet(
 			`${this.apiBase}/api/series/${slug}`,
-			true,
+			true
 		);
 		const seriesJson = this._parseJsonBody(seriesRes.body, "getDetail-series");
 		const s = seriesJson.series || seriesJson;
@@ -507,12 +505,12 @@ class DefaultExtension extends MProvider {
 		const alternativeTitles = this._extractAlternativeTitles(s);
 		const description = this._buildDetailDescription(
 			descriptionBase,
-			alternativeTitles,
+			alternativeTitles
 		);
 		const imageUrl = s.cover || s.cover_url || "";
 		const seriesPublicUrl = this._normalizeSitePath(
 			s.public_url || `/comics/${slug}`,
-			`/comics/${slug}`,
+			`/comics/${slug}`
 		);
 		const author = s.author || "";
 		const artist = s.artist || "";
@@ -527,11 +525,11 @@ class DefaultExtension extends MProvider {
 		while (true) {
 			const chapRes = await this._apiGet(
 				`${this.apiBase}/api/series/${slug}/chapters?offset=${offset}&limit=${limit}`,
-				true,
+				true
 			);
 			const pageJson = this._parseJsonBody(
 				chapRes.body,
-				`getDetail-chapters-offset-${offset}`,
+				`getDetail-chapters-offset-${offset}`
 			);
 			const pageData = pageJson.data || [];
 			if (pageData.length === 0) break;
@@ -557,7 +555,7 @@ class DefaultExtension extends MProvider {
 			return {
 				name: chapterTitle ? `${chapterLabel} - ${chapterTitle}` : chapterLabel,
 				url: `${seriesPublicUrl}/chapter/${ch.slug}`,
-				dateUpload: this.parseDate(ch.published_at),
+				dateUpload: this.parseDate(ch.published_at)
 			};
 		});
 
@@ -577,9 +575,8 @@ class DefaultExtension extends MProvider {
 						: {
 								url:
 									p.url || p.image_url || p.page_url || p.image || p.src || "",
-								order:
-									p.order != null ? p.order : p.index != null ? p.index : i,
-							},
+								order: p.order != null ? p.order : p.index != null ? p.index : i
+							}
 				)
 				.filter((p) => !!p.url)
 				.sort((a, b) => a.order - b.order)
@@ -627,7 +624,7 @@ class DefaultExtension extends MProvider {
 		const hasSessionAuth = await this._hasSessionAuth();
 		if (!hasSessionAuth) {
 			throw new Error(
-				"Chapter appears locked. Login via source WebView, then retry.",
+				"Chapter appears locked. Login via source WebView, then retry."
 			);
 		}
 		if (chapterData.isLocked) {
@@ -645,8 +642,8 @@ class DefaultExtension extends MProvider {
 					summary: "https://asurascans.com",
 					value: "https://asurascans.com",
 					dialogTitle: "Override Site URL",
-					dialogMessage: "",
-				},
+					dialogMessage: ""
+				}
 			},
 			{
 				key: "overrideApiUrl",
@@ -655,9 +652,9 @@ class DefaultExtension extends MProvider {
 					summary: "https://api.asurascans.com",
 					value: "https://api.asurascans.com",
 					dialogTitle: "Override API URL",
-					dialogMessage: "",
-				},
-			},
+					dialogMessage: ""
+				}
+			}
 		];
 	}
 }

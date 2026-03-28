@@ -8,6 +8,10 @@ class OmegaScans extends MProvider {
   final Client client = Client();
 
   static const _defaultPerPage = "20";
+  static const List<String> _blockedAssetHostSuffixes = ["bato.to"];
+  static const List<String> _blockedAssetPathFragments = [
+    "/amsta/img/btoto/logo-batoto.png",
+  ];
   static const List<Map<String, String>> _availableTags = [
     {"name": "Drama", "id": "2"},
     {"name": "Harem", "id": "8"},
@@ -676,12 +680,45 @@ class OmegaScans extends MProvider {
 
   String _toAbsoluteUrl(String value) {
     if (value.isEmpty) return value;
-    if (value.startsWith("http://") || value.startsWith("https://"))
-      return value;
-    if (value.startsWith("//")) return "https:$value";
+    if (value.startsWith("http://") || value.startsWith("https://")) {
+      return _sanitizeRemoteAssetUrl(value);
+    }
+    if (value.startsWith("//")) return _sanitizeRemoteAssetUrl("https:$value");
     final base = source.baseUrl ?? "https://omegascans.org";
-    if (value.startsWith("/")) return "$base$value";
-    return "$base/$value";
+    if (value.startsWith("/")) return _sanitizeRemoteAssetUrl("$base$value");
+    return _sanitizeRemoteAssetUrl("$base/$value");
+  }
+
+  String _sanitizeRemoteAssetUrl(String value) {
+    final url = value.trim();
+    if (url.isEmpty) return "";
+
+    final uri = Uri.tryParse(url);
+    if (uri == null) return "";
+    if (uri.scheme != "http" && uri.scheme != "https") return "";
+    if (uri.host.trim().isEmpty) return "";
+
+    final host = uri.host.toLowerCase();
+    final path = uri.path.toLowerCase();
+    if (_isBlockedAssetHost(host) || _isBlockedAssetPath(path)) {
+      return "";
+    }
+
+    return url;
+  }
+
+  bool _isBlockedAssetHost(String host) {
+    for (final suffix in _blockedAssetHostSuffixes) {
+      if (host == suffix || host.endsWith(".$suffix")) return true;
+    }
+    return false;
+  }
+
+  bool _isBlockedAssetPath(String path) {
+    for (final fragment in _blockedAssetPathFragments) {
+      if (path.contains(fragment)) return true;
+    }
+    return false;
   }
 
   String? _parseDateUpload(dynamic raw) {
