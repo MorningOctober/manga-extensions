@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.genzupdates.png",
 		"typeSource": "single",
 		"itemType": 0,
-		"version": "0.0.7",
+		"version": "0.0.8",
 		"dateFormat": "MMM d, yyyy",
 		"dateFormatLocale": "en",
 		"hasCloudflare": true,
@@ -48,13 +48,17 @@ class DefaultExtension extends MProvider {
 		return this._httpClient || new Client();
 	}
 
+	_isCloudflareChallengeHtml(html) {
+		return /failed to bypass cloudflare|cf_chl|challenge-platform|Just a moment|Nur einen Moment|Security verification|Sicherheitsüberprüfung|Enable JavaScript and cookies|verify you are human|challenges\.cloudflare\.com|cf-turnstile|hcaptcha/i.test(
+			String(html || "")
+		);
+	}
+
 	_isCloudflareBlockedResponse(response) {
 		const statusCode = Number(response?.statusCode || 0);
 		const body = String(response?.body || "");
 		if (statusCode === 403 || statusCode === 503) return true;
-		return /failed to bypass cloudflare|cf_chl|challenge-platform|Just a moment|Security verification|Enable JavaScript and cookies/i.test(
-			body
-		);
+		return this._isCloudflareChallengeHtml(body);
 	}
 
 	_absoluteUrl(url) {
@@ -128,12 +132,7 @@ class DefaultExtension extends MProvider {
 	}
 
 	_throwIfChallenge(html, context) {
-		const sample = String(html || "");
-		if (
-			/cf_chl|challenge-platform|Just a moment|Security verification/i.test(
-				sample
-			)
-		) {
+		if (this._isCloudflareChallengeHtml(html)) {
 			throw new Error(
 				`Cloudflare challenge blocked ${context}. Open Genz Updates in WebView and retry.`
 			);
@@ -172,6 +171,15 @@ class DefaultExtension extends MProvider {
 		const timestamp = Date.parse(value);
 		if (Number.isNaN(timestamp)) return null;
 		return String(timestamp);
+	}
+
+	_extractChapterNumber(chapterName) {
+		const match = this._cleanText(chapterName).match(
+			/Chapter\s*(\d+(?:\.\d+)?)/i
+		);
+		if (!match?.[1]) return null;
+		const value = Number(match[1]);
+		return Number.isFinite(value) ? value : null;
 	}
 
 	_parseRelativeDate(dateText) {
@@ -481,6 +489,19 @@ class DefaultExtension extends MProvider {
 		return this._cleanText(match?.[1] || "");
 	}
 
+	_extractDetailMetaMap(html) {
+		const meta = new Map();
+		for (const match of String(html).matchAll(
+			/<span>\s*(Author|Artist|Type|Status|Updated|Created)\s*<\/span>[\s\S]{0,300}?<div[^>]*>\s*([\s\S]{0,220}?)\s*<\/div>/gi
+		)) {
+			const key = this._cleanText(match[1]).toLowerCase();
+			const value = this._stripHtml(this._decodeHtmlEntities(match[2]));
+			if (!key || !value || meta.has(key)) continue;
+			meta.set(key, value);
+		}
+		return meta;
+	}
+
 	async getDetail(url) {
 		const seriesPath = this._normalizeSeriesPath(url);
 		if (!seriesPath) {
@@ -493,6 +514,7 @@ class DefaultExtension extends MProvider {
 		const html = res.body;
 		const document = new Document(html);
 		const bodyText = this._cleanText(document.body ? document.body.text : "");
+		const detailMeta = this._extractDetailMetaMap(html);
 
 		const genres = [];
 		for (const tag of document.select('a[href*="/series/?genre="]')) {
@@ -501,32 +523,40 @@ class DefaultExtension extends MProvider {
 			if (!genres.includes(name)) genres.push(name);
 		}
 
-		const author = this._extractMetaByLabel(bodyText, "Author", [
-			"Artist",
-			"Type",
-			"Status"
-		]);
-		const artist = this._extractMetaByLabel(bodyText, "Artist", [
-			"Type",
-			"Status",
-			"Updated"
-		]);
-		const statusText = this._extractMetaByLabel(bodyText, "Status", [
-			"Updated",
-			"Created",
-			"Synopsis"
-		]);
+		const author =
+			this._cleanText(detailMeta.get("author") || "") ||
+			this._extractMetaByLabel(bodyText, "Author", [
+				"Artist",
+				"Type",
+				"Status"
+			]);
+		const artist =
+			this._cleanText(detailMeta.get("artist") || "") ||
+			this._extractMetaByLabel(bodyText, "Artist", [
+				"Type",
+				"Status",
+				"Updated"
+			]);
+		const statusText =
+			this._cleanText(detailMeta.get("status") || "") ||
+			this._extractMetaByLabel(bodyText, "Status", [
+				"Updated",
+				"Created",
+				"Synopsis"
+			]);
 
 		const chapters = [];
 		const seenChapters = new Set();
 		for (const chapter of document.select('a[href^="/chapter/"]')) {
 			const chapterPath = this._normalizeChapterPath(chapter.attr("href"));
-			if (!chapterPath || seenChapters.has(chapterPath)) continue;
-
+			if (!chapterPath) continue;
+			const chapterClass = this._cleanText(chapter.attr("class"));
 			const chapterTitle = this._cleanText(chapter.attr("title"));
 			const chapterAlt = this._cleanText(chapter.attr("alt"));
 			const chapterNumber = this._cleanText(chapter.attr("c"));
 			const chapterDate = this._cleanText(chapter.attr("d"));
+			const isListingChapter = /\bgroup\b/i.test(chapterClass) || !!chapterDate;
+			if (!isListingChapter || seenChapters.has(chapterPath)) continue;
 			const rawText = this._cleanText(
 				`${chapterTitle} ${chapterAlt} ${chapterDate} ${chapter.text}`
 			);
@@ -567,6 +597,17 @@ class DefaultExtension extends MProvider {
 			});
 			seenChapters.add(chapterPath);
 		}
+		chapters.sort((a, b) => {
+			const aNumber = this._extractChapterNumber(a.name);
+			const bNumber = this._extractChapterNumber(b.name);
+			if (aNumber != null && bNumber != null && aNumber !== bNumber) {
+				return bNumber - aNumber;
+			}
+			const aDate = Number(a.dateUpload || 0);
+			const bDate = Number(b.dateUpload || 0);
+			if (aDate !== bDate) return bDate - aDate;
+			return 0;
+		});
 
 		return {
 			imageUrl: this._extractCover(html),
