@@ -8,6 +8,7 @@ class OmegaScans extends MProvider {
   final Client client = Client();
 
   static const _defaultPerPage = "20";
+  static const _fallbackPageImageUrl = "https://omegascans.org/favicon.ico";
   static const List<String> _blockedAssetHostSuffixes = ["bato.to"];
   static const List<String> _blockedAssetPathFragments = [
     "/amsta/img/btoto/logo-batoto.png",
@@ -445,27 +446,35 @@ class OmegaScans extends MProvider {
   @override
   Future<List<String>> getPageList(String url) async {
     final ref = _extractChapterRef(url);
-    if (ref.seriesSlug.isEmpty || ref.chapterSlug.isEmpty) return [];
-    final res = await client.get(
-      _apiUri("/chapter/${ref.seriesSlug}/${ref.chapterSlug}"),
-      headers: _headers,
-    );
-    final data = _asMap(_decodeJsonSafe(res.body));
-
-    if (data["paywall"] == true) return [];
-
-    final chapter = _asMap(data["chapter"]);
-    final chapterData = _asMap(chapter["chapter_data"]);
-    final images = _asList(chapterData["images"]);
-
-    final pages = <String>[];
-    for (final image in images) {
-      final imageUrl = _extractImageUrl(image);
-      if (imageUrl.isEmpty) continue;
-      pages.add(_toAbsoluteUrl(imageUrl));
+    if (ref.seriesSlug.isEmpty || ref.chapterSlug.isEmpty) {
+      return _fallbackPageList();
     }
 
-    return pages;
+    try {
+      final res = await client.get(
+        _apiUri("/chapter/${ref.seriesSlug}/${ref.chapterSlug}"),
+        headers: _headers,
+      );
+      final data = _asMap(_decodeJsonSafe(res.body));
+      if (data["paywall"] == true) return _fallbackPageList();
+
+      final chapter = _asMap(data["chapter"]);
+      final chapterData = _asMap(chapter["chapter_data"]);
+      final images = _asList(chapterData["images"]);
+
+      final pages = <String>[];
+      for (final image in images) {
+        final imageUrl = _extractImageUrl(image);
+        if (imageUrl.isEmpty) continue;
+        final normalizedUrl = _toAbsoluteUrl(imageUrl);
+        if (normalizedUrl.isEmpty) continue;
+        pages.add(normalizedUrl);
+      }
+
+      return pages.isNotEmpty ? pages : _fallbackPageList();
+    } catch (_) {
+      return _fallbackPageList();
+    }
   }
 
   @override
@@ -818,6 +827,12 @@ class OmegaScans extends MProvider {
       ]);
     }
     return "";
+  }
+
+  List<String> _fallbackPageList() {
+    final fallback = _toAbsoluteUrl(_fallbackPageImageUrl);
+    if (fallback.isEmpty) return [_fallbackPageImageUrl];
+    return [fallback];
   }
 
   @override
