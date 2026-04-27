@@ -9,7 +9,7 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.genzupdates.png",
 		"typeSource": "single",
 		"itemType": 0,
-		"version": "0.0.9",
+		"version": "0.0.10",
 		"dateFormat": "MMM d, yyyy",
 		"dateFormatLocale": "en",
 		"hasCloudflare": false,
@@ -89,6 +89,16 @@ class DefaultExtension extends MProvider {
 
 	_stripHtml(html) {
 		return this._cleanText(String(html || "").replace(/<[^>]+>/g, " "));
+	}
+
+	_attrFromHtml(html, attrName) {
+		const escapedName = String(attrName || "").replace(
+			/[.*+?^${}()|[\]\\]/g,
+			"\\$&"
+		);
+		const pattern = new RegExp(`${escapedName}=("|')([\\s\\S]*?)\\1`, "i");
+		const match = String(html || "").match(pattern);
+		return this._decodeHtmlEntities(match?.[2] || "");
 	}
 
 	_extractUrlFromStyle(styleValue) {
@@ -324,12 +334,86 @@ class DefaultExtension extends MProvider {
 		return list;
 	}
 
-	_hasNextPage(html, page) {
-		const nextPage = page + 1;
-		const document = new Document(html);
-		const links = document.select(`a[href*="page=${nextPage}"]`);
-		if (Array.isArray(links) && links.length > 0) return true;
-		return false;
+	_collectSeriesMetaFromHtml(html) {
+		const metaByPath = new Map();
+		for (const match of String(html || "").matchAll(
+			/<button\b[\s\S]*?<\/button>/gi
+		)) {
+			const block = match[0];
+			const path = this._normalizeSeriesPath(this._attrFromHtml(block, "href"));
+			if (!path || metaByPath.has(path)) continue;
+
+			let tags = [];
+			const tagsRaw = this._attrFromHtml(block, "tags");
+			if (tagsRaw) {
+				try {
+					const parsedTags = JSON.parse(tagsRaw);
+					if (Array.isArray(parsedTags)) tags = parsedTags.map(String);
+				} catch (_err) {
+					tags = tagsRaw
+						.split(",")
+						.map((tag) => tag.replace(/^["'[]+|["'\]]+$/g, ""));
+				}
+			}
+
+			metaByPath.set(path, {
+				type: this._cleanText(
+					this._attrFromHtml(block, "data-type")
+				).toLowerCase(),
+				status: this._cleanText(
+					this._attrFromHtml(block, "data-status")
+				).toLowerCase(),
+				tags: tags.map((tag) => this._cleanText(tag).toLowerCase()),
+				text: this._cleanText(
+					`${this._attrFromHtml(block, "title")} ${this._attrFromHtml(
+						block,
+						"alt"
+					)} ${this._stripHtml(block)}`
+				).toLowerCase()
+			});
+		}
+		return metaByPath;
+	}
+
+	_filterSeriesList(list, html, query, type, status, genre) {
+		const normalizedQuery = this._cleanText(query).toLowerCase();
+		const normalizedType = this._cleanText(type).toLowerCase();
+		const normalizedStatus = this._cleanText(status).toLowerCase();
+		const normalizedGenre = this._cleanText(genre).toLowerCase();
+		if (
+			!normalizedQuery &&
+			!normalizedType &&
+			!normalizedStatus &&
+			!normalizedGenre
+		) {
+			return list;
+		}
+
+		const metaByPath = this._collectSeriesMetaFromHtml(html);
+		return list.filter((item) => {
+			const meta = metaByPath.get(item.link) || {
+				type: "",
+				status: "",
+				tags: [],
+				text: item.name.toLowerCase()
+			};
+			if (
+				normalizedQuery &&
+				!meta.text.includes(normalizedQuery) &&
+				!item.name.toLowerCase().includes(normalizedQuery)
+			) {
+				return false;
+			}
+			if (normalizedType && meta.type !== normalizedType) return false;
+			if (normalizedStatus && meta.status !== normalizedStatus) return false;
+			if (
+				normalizedGenre &&
+				!meta.tags.some((tag) => tag.replace(/\s+/g, "-") === normalizedGenre)
+			) {
+				return false;
+			}
+			return true;
+		});
 	}
 
 	_getFilterValue(filters, index, fallback) {
@@ -343,13 +427,13 @@ class DefaultExtension extends MProvider {
 
 	async _seriesList(path, page) {
 		const safePage = Number(page) > 0 ? Number(page) : 1;
-		const separator = path.includes("?") ? "&" : "?";
-		const res = await this._request(`${path}${separator}page=${safePage}`);
+		if (safePage > 1) return { list: [], hasNextPage: false };
+		const res = await this._request(path);
 		this._throwIfChallenge(res.body, `series-list page ${safePage}`);
 		const list = this._collectSeriesFromHtml(res.body);
 		return {
 			list,
-			hasNextPage: this._hasNextPage(res.body, safePage)
+			hasNextPage: false
 		};
 	}
 
@@ -415,23 +499,12 @@ class DefaultExtension extends MProvider {
 
 	async search(query, page, filters) {
 		const safePage = Number(page) > 0 ? Number(page) : 1;
-		const params = [];
-		const pushParam = (key, value) => {
-			if (value == null) return;
-			const normalized = this._cleanText(String(value));
-			if (!normalized) return;
-			params.push(
-				`${encodeURIComponent(key)}=${encodeURIComponent(normalized)}`
-			);
-		};
-		pushParam("q", query);
-		pushParam("page", safePage);
+		if (safePage > 1) return { list: [], hasNextPage: false };
 
 		const type = this._getFilterValue(filters, 0, "");
 		const status = this._getFilterValue(filters, 1, "");
-		pushParam("type", type);
-		pushParam("status", status);
 
+		let genre = "";
 		const genreFilter = Array.isArray(filters) ? filters[2] : null;
 		if (genreFilter && Array.isArray(genreFilter.state)) {
 			const selected = genreFilter.state
@@ -439,16 +512,23 @@ class DefaultExtension extends MProvider {
 				.map((checkbox) => String(checkbox.value || ""))
 				.filter(Boolean);
 			if (selected.length > 0) {
-				pushParam("genre", selected[0]);
+				genre = selected[0];
 			}
 		}
 
-		const res = await this._request(`/series/?${params.join("&")}`);
+		const res = await this._request("/series/");
 		this._throwIfChallenge(res.body, `search page ${safePage}`);
-		const list = this._collectSeriesFromHtml(res.body);
+		const list = this._filterSeriesList(
+			this._collectSeriesFromHtml(res.body),
+			res.body,
+			query,
+			type,
+			status,
+			genre
+		);
 		return {
 			list,
-			hasNextPage: this._hasNextPage(res.body, safePage)
+			hasNextPage: false
 		};
 	}
 
