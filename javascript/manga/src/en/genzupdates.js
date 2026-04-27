@@ -9,10 +9,10 @@ const mangayomiSources = [
 			"https://raw.githubusercontent.com/MorningOctober/manga-extensions/main/javascript/icon/en.genzupdates.png",
 		"typeSource": "single",
 		"itemType": 0,
-		"version": "0.0.8",
+		"version": "0.0.9",
 		"dateFormat": "MMM d, yyyy",
 		"dateFormatLocale": "en",
-		"hasCloudflare": true,
+		"hasCloudflare": false,
 		"pkgPath": "manga/src/en/genzupdates.js"
 	}
 ];
@@ -20,10 +20,7 @@ const mangayomiSources = [
 class DefaultExtension extends MProvider {
 	constructor(...args) {
 		super(...args);
-		// Keep default client stack so Mangayomi's Cloudflare resolver and
-		// persisted WebView cookie/UA handling can be applied without forcing
-		// the Dart-only HTTP profile.
-		this._httpClient = new Client();
+		this._httpClient = new Client({ useDartHttpClient: true });
 	}
 
 	get siteBase() {
@@ -40,12 +37,18 @@ class DefaultExtension extends MProvider {
 			"Accept-Language": "en-US,en;q=0.9",
 			"Cache-Control": "no-cache",
 			Pragma: "no-cache",
-			Referer: `${this.siteBase}/`
+			Referer: `${this.siteBase}/`,
+			"Sec-Fetch-Dest": "document",
+			"Sec-Fetch-Mode": "navigate",
+			"Sec-Fetch-Site": "same-origin",
+			"Upgrade-Insecure-Requests": "1",
+			"User-Agent":
+				"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 		};
 	}
 
 	_client() {
-		return this._httpClient || new Client();
+		return this._httpClient || new Client({ useDartHttpClient: true });
 	}
 
 	_isCloudflareChallengeHtml(html) {
@@ -321,12 +324,12 @@ class DefaultExtension extends MProvider {
 		return list;
 	}
 
-	_hasNextPage(html, page, itemsLength) {
+	_hasNextPage(html, page) {
 		const nextPage = page + 1;
 		const document = new Document(html);
 		const links = document.select(`a[href*="page=${nextPage}"]`);
 		if (Array.isArray(links) && links.length > 0) return true;
-		return itemsLength >= 20;
+		return false;
 	}
 
 	_getFilterValue(filters, index, fallback) {
@@ -346,7 +349,7 @@ class DefaultExtension extends MProvider {
 		const list = this._collectSeriesFromHtml(res.body);
 		return {
 			list,
-			hasNextPage: this._hasNextPage(res.body, safePage, list.length)
+			hasNextPage: this._hasNextPage(res.body, safePage)
 		};
 	}
 
@@ -445,7 +448,7 @@ class DefaultExtension extends MProvider {
 		const list = this._collectSeriesFromHtml(res.body);
 		return {
 			list,
-			hasNextPage: this._hasNextPage(res.body, safePage, list.length)
+			hasNextPage: this._hasNextPage(res.body, safePage)
 		};
 	}
 
